@@ -1,0 +1,7 @@
+services:
+  frontend:
+    image: node:20
+    ports: ["3000:3000"]
+  api:
+    image: node:20
+    ports: ["4000:4000"]

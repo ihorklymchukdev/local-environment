@@ -1,0 +1,7 @@
+services:
+  app:
+    image: node:20
+    ports: ["3000:3000"]
+  db:
+    image: postgres:16
+    expose: ["5432"]

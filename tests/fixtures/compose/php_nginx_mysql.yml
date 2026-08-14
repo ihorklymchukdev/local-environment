@@ -1,0 +1,9 @@
+services:
+  nginx:
+    image: nginx:alpine
+    ports: ["8080:80"]
+  php:
+    image: php:8.3-fpm
+  mysql:
+    image: mysql:8
+    expose: ["3306"]
