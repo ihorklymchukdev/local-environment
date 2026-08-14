@@ -1,0 +1,44 @@
+from typer.testing import CliRunner
+import runtime.cli as cli
+from runtime.core.provider import Completed
+
+runner = CliRunner()
+
+
+class FakeProvider:
+    def __init__(self, exists=False):
+        self._exists = exists
+        self.created = False
+        self.execs = []
+
+    def exists(self): return self._exists
+    def create(self): self.created = True
+    def start(self): pass
+    def stop(self): pass
+    def destroy(self): pass
+    def exec(self, argv, *, root=False):
+        self.execs.append(argv)
+        # make the marker read report "already current" so bootstrap is a no-op
+        from runtime.core import constants
+        if "cat" in argv:
+            return Completed(0, str(constants.BOOTSTRAP_VERSION), "")
+        return Completed(0, "", "")
+    def forward(self, g, h): pass
+    def is_supported(self): ...
+
+
+def test_vm_create_creates_when_absent(monkeypatch):
+    fake = FakeProvider(exists=False)
+    monkeypatch.setattr(cli, "_provider_factory", lambda: fake)
+    result = runner.invoke(cli.app, ["vm", "create"])
+    assert result.exit_code == 0
+    assert fake.created is True
+    assert "VM ready." in result.stdout
+
+
+def test_vm_create_skips_create_when_present(monkeypatch):
+    fake = FakeProvider(exists=True)
+    monkeypatch.setattr(cli, "_provider_factory", lambda: fake)
+    result = runner.invoke(cli.app, ["vm", "create"])
+    assert result.exit_code == 0
+    assert fake.created is False
