@@ -76,7 +76,7 @@ def up(directory: str = typer.Argument(".", help="Project directory with a docke
     """Bring a compose project up and print its URL(s)."""
     import yaml
     from runtime.core import constants
-    from runtime.core.project import load_project, STARTED_OK, CRASH_LOOPING
+    from runtime.core.project import load_project, STARTED_OK
     from runtime.core.lifecycle import push_project, compose_up
     from runtime.core.state import State
     from runtime.providers import default_install_dir

@@ -19,3 +19,10 @@ include = ["runtime*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore:The configuration option \"asyncio_default_fixture_loop_scope\" is unset:DeprecationWarning",
+]
+# pytest-asyncio (a globally-installed plugin, unused by this project) emits its
+# loop-scope warning from pytest_configure, a phase filterwarnings above can't
+# reach; setting the option it asks for removes the warning at the source.
+asyncio_default_fixture_loop_scope = "function"

@@ -6,7 +6,7 @@ import tarfile
 from pathlib import Path
 
 from . import constants
-from .project import Project, classify, overlay_yaml, STARTED_OK
+from .project import Project, classify, overlay_yaml
 
 
 def _guest_dir(project_id: str) -> str:
