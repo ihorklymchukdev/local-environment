@@ -37,3 +37,14 @@ def test_allocate_raises_when_range_exhausted(tmp_path):
         assert False, "expected RuntimeError"
     except RuntimeError:
         pass
+
+
+def test_remove_project_cascades_forwards(tmp_path):
+    s = State(tmp_path / "s.db")
+    s.add_project("p", "/g/p", "p.d.io")
+    s.add_forward("p", "db", 5432, 39100)
+    s.add_forward("p", "api", 8000, 39101)
+    s.remove_project("p")
+    assert s.get_project("p") is None
+    # forwards must be gone: the freed host port is reusable
+    assert s.allocate_host_port(start=39100, end=39102) == 39100
