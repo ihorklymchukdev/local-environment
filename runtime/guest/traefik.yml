@@ -1,0 +1,7 @@
+entryPoints:
+  web:
+    address: ":39080"
+providers:
+  docker:
+    exposedByDefault: false
+    network: edge
