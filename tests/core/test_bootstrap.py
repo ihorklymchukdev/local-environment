@@ -36,3 +36,10 @@ def test_bootstrap_runs_script_as_root_when_absent():
     bootstrap(p)
     ran = [a for a, root in p.execs if root and "bootstrap.sh" in " ".join(a)]
     assert ran, "expected bootstrap.sh to run as root"
+
+
+def test_bootstrap_runs_when_force_true():
+    p = FakeProvider(marker_value=str(constants.BOOTSTRAP_VERSION))
+    bootstrap(p, force=True)
+    ran = [a for a, root in p.execs if root and "bootstrap.sh" in " ".join(a)]
+    assert ran, "expected bootstrap.sh to run as root when force=True"
