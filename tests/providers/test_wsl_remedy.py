@@ -59,3 +59,12 @@ def test_register_resume_writes_a_self_deleting_runonce_value():
 def test_image_selection_follows_architecture():
     assert "amd64" in make(arch="amd64").image().url
     assert "arm64" in make(arch="arm64").image().url
+
+
+def test_default_install_dir_is_importable_without_circular_import():
+    # _default_facts measures disk space under default_install_dir(), not
+    # sys.prefix; this only guards against the circular import that local
+    # importing avoids, since disk measurement itself can't run on Linux.
+    from runtime.providers import default_install_dir
+    from runtime.providers.wsl2 import _default_facts
+    assert callable(default_install_dir) and callable(_default_facts)

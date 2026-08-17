@@ -19,6 +19,8 @@ def _default_runner(argv):
 
 
 def _default_facts() -> dict:
+    from . import default_install_dir  # local import: providers/__init__ imports this module
+
     def wmi(query: str) -> str:
         out = subprocess.run(["powershell", "-NoProfile", "-Command", query],
                              capture_output=True)
@@ -36,7 +38,11 @@ def _default_facts() -> dict:
             wmi("(Get-CimInstance Win32_ComputerSystem).HypervisorPresent") == "True",
         "firmware_virtualization":
             wmi("(Get-CimInstance Win32_Processor).VirtualizationFirmwareEnabled") == "True",
-        "free_gb": shutil.disk_usage(sys.prefix).free / 1024 ** 3,
+        # Measure the drive that will actually hold the VM, not Python's
+        # drive. Anchor rather than the full path: on a first run the
+        # install directory doesn't exist yet.
+        "free_gb": shutil.disk_usage(
+            Path(default_install_dir()).anchor or sys.prefix).free / 1024 ** 3,
         "wsl_features_enabled": status.returncode == 0,
     }
 
