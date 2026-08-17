@@ -40,7 +40,17 @@ class Progress:
 @dataclass(frozen=True)
 class Step:
     name: str
-    run: Callable[[], None]
+    run: Callable[[], str | None]
+    # Steps that prove or report the outcome must run on every invocation,
+    # otherwise a re-run reports success without checking anything.
+    always_run: bool = False
+    # Plain-language next move for the user when this step fails.
+    action: str = ""
+
+
+# Shown when RunOnce relaunches setup at logon: a window that opens by itself
+# after a restart has to say why it is there.
+RESUME_NOTICE = "Continuing setup after the restart — you don't need to do anything."
 
 
 class RebootRequired(Exception):
@@ -48,22 +58,23 @@ class RebootRequired(Exception):
 
 
 class InstallError(RuntimeError):
-    def __init__(self, step: str, message: str):
+    def __init__(self, step: str, message: str, action: str = ""):
         super().__init__(f"{step}: {message}")
         self.step = step
         self.message = message
+        self.action = action
 
 
 def run_install(steps: list[Step], state: InstallState,
                 report: Callable[[Progress], None]) -> None:
     done = state.completed()
     for step in steps:
-        if step.name in done:
+        if step.name in done and not step.always_run:
             report(Progress(step.name, "skipped"))
             continue
         report(Progress(step.name, "running"))
         try:
-            step.run()
+            message = step.run()
         except RebootRequired:
             # The reboot itself satisfies the gate; resuming must step past it.
             state.mark(step.name)
@@ -74,9 +85,12 @@ def run_install(steps: list[Step], state: InstallState,
             raise
         except Exception as e:
             report(Progress(step.name, "failed", str(e)))
-            raise InstallError(step.name, str(e)) from e
-        state.mark(step.name)
-        report(Progress(step.name, "done"))
+            raise InstallError(step.name, str(e), step.action) from e
+        # An always-run step is never persisted: recording it would claim a
+        # proof that is only valid for the run that produced it.
+        if not step.always_run:
+            state.mark(step.name)
+        report(Progress(step.name, "done", message or ""))
 
 
 class DeadEnd(RuntimeError):
@@ -111,18 +125,17 @@ def _default_http_get(url: str) -> int:
         return response.status
 
 
-def verify_step(provider, template_dir, domain: str, *,
+def verify_step(provider, template_dir: Path, domain: str, *,
                 http_get=_default_http_get) -> None:
     """Run the bundled template end to end and require HTTP 200."""
     import yaml
 
-    from . import constants
+    from .constants import VERIFY_PROJECT_ID
     from .lifecycle import compose_down, compose_up, push_project
     from .project import STARTED_OK, load_project
 
-    template_dir = Path(template_dir)
     compose = yaml.safe_load((template_dir / "docker-compose.yml").read_text()) or {}
-    project = load_project(compose, None, template_dir.name)
+    project = load_project(compose, {"id": VERIFY_PROJECT_ID}, template_dir.name)
     try:
         push_project(provider, project.id, template_dir)
         status, urls = compose_up(provider, project, template_dir, domain)
@@ -138,28 +151,64 @@ def verify_step(provider, template_dir, domain: str, *,
         compose_down(provider, project.id)
 
 
-def default_steps(provider, *, cache_dir, template_dir, domain,
-                  exe_path: str) -> list[Step]:
+def finish_step(install_dir) -> str:
+    """The only step whose product is words. Every run must reach it."""
+    return (
+        "Setup finished successfully.\n"
+        f"The virtual machine and its files are in: {install_dir}\n\n"
+        "To start a project, open PowerShell and run:\n\n"
+        "    runtime up <folder>\n\n"
+        "where <folder> is the folder that holds your docker-compose.yml.")
+
+
+_ACTIONS = {
+    "preflight": "This computer could not be checked. Restart it and run setup again.",
+    "remediate": "Windows features could not be turned on. Run setup again and "
+                 "choose Yes when Windows asks for permission.",
+    "reboot_gate": "Restart the computer and run setup again.",
+    "fetch_image": "The Linux image could not be downloaded — the internet "
+                   "connection was unavailable. Run setup again and the download "
+                   "continues from where it stopped.",
+    "create_vm": "The virtual machine could not be created. Restart the computer, "
+                 "make sure there is at least 10 GB free, and run setup again.",
+    "bootstrap": "Software could not be installed inside the virtual machine — "
+                 "this usually means the internet connection dropped. Run setup again.",
+    "verify": "The test project did not answer. Run setup again; if it fails a "
+              "second time, use Copy diagnostics and send us the text.",
+}
+
+
+def default_steps(provider, *, cache_dir, template_dir: Path, domain,
+                  exe_path: str, install_dir) -> list[Step]:
     from .download import fetch
 
+    image = provider.image()
+    # Assigned here rather than inside fetch_image: that step is skipped on a
+    # resume or a re-run, and create_vm needs the path in every process.
+    rootfs = Path(cache_dir) / image.url.rsplit("/", 1)[-1]
+    provider.rootfs = rootfs
+
     def fetch_image():
-        image = provider.image()
-        dest = Path(cache_dir) / image.url.rsplit("/", 1)[-1]
-        provider.rootfs = fetch(image, dest)
+        fetch(image, rootfs)
 
     def gate():
         if provider.reboot_required():
             provider.register_resume(exe_path)
         reboot_gate_step(provider)
 
+    def step(name: str, run, *, always_run: bool = False) -> Step:
+        return Step(name, run, always_run=always_run, action=_ACTIONS.get(name, ""))
+
     return [
-        Step("preflight", lambda: preflight_step(provider)),
-        Step("remediate", lambda: remediate_step(provider)),
-        Step("reboot_gate", gate),
-        Step("fetch_image", fetch_image),
-        Step("create_vm", lambda: None if provider.exists() else provider.create()),
-        Step("bootstrap", lambda: _bootstrap(provider)),
-        Step("verify", lambda: verify_step(provider, template_dir, domain)),
+        step("preflight", lambda: preflight_step(provider)),
+        step("remediate", lambda: remediate_step(provider)),
+        step("reboot_gate", gate),
+        step("fetch_image", fetch_image),
+        step("create_vm", lambda: None if provider.exists() else provider.create()),
+        step("bootstrap", lambda: _bootstrap(provider)),
+        step("verify", lambda: verify_step(provider, template_dir, domain),
+             always_run=True),
+        step("finish", lambda: finish_step(install_dir), always_run=True),
     ]
 
 

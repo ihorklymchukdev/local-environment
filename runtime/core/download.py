@@ -7,6 +7,10 @@ from .images import Image
 
 _CHUNK = 1024 * 1024
 
+# Applies per socket operation, not to the whole 391 MB transfer: a stalled
+# connection raises instead of hanging the installer with no way to cancel.
+_TIMEOUT_SECONDS = 60
+
 
 class ChecksumMismatch(RuntimeError):
     """The downloaded bytes do not match the expected digest."""
@@ -23,7 +27,7 @@ def sha256_of(path: Path) -> str:
 def _default_opener(url: str, start_byte: int):
     from urllib.request import Request, urlopen
     headers = {"Range": f"bytes={start_byte}-"} if start_byte else {}
-    response = urlopen(Request(url, headers=headers))
+    response = urlopen(Request(url, headers=headers), timeout=_TIMEOUT_SECONDS)
     length = int(response.headers.get("Content-Length", 0)) + start_byte
     return response, length
 

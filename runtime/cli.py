@@ -159,8 +159,8 @@ def setup(resume: bool = typer.Option(False, "--resume"),
     from pathlib import Path
     from runtime.core import constants
     from runtime.core.install import (
-        DeadEnd, InstallError, InstallState, Progress, RebootRequired,
-        default_steps, run_install,
+        RESUME_NOTICE, DeadEnd, InstallError, InstallState, Progress,
+        RebootRequired, default_steps, run_install,
     )
     from runtime.providers import default_install_dir
 
@@ -173,16 +173,22 @@ def setup(resume: bool = typer.Option(False, "--resume"),
         template_dir=Path(__file__).resolve().parent / "templates" / "nginx-hello",
         domain=constants.DEFAULT_DOMAIN,
         exe_path=_sys.executable,
+        install_dir=default_install_dir(),
     )
 
     def report(progress: Progress):
-        if progress.status in ("running", "done", "failed"):
-            typer.echo(f"[{progress.status:>7}] {progress.step} {progress.message}".rstrip())
+        if progress.status not in ("running", "done", "failed"):
+            return
+        typer.echo(f"[{progress.status:>7}] {progress.step}")
+        if progress.message:
+            typer.echo(progress.message)
 
     if not headless:
         from runtime.setup_app.app import run_window
-        raise typer.Exit(code=run_window(steps, state))
+        raise typer.Exit(code=run_window(steps, state, resumed=resume))
 
+    if resume:
+        typer.echo(RESUME_NOTICE)
     try:
         run_install(steps, state, report)
     except RebootRequired:
@@ -194,8 +200,9 @@ def setup(resume: bool = typer.Option(False, "--resume"),
         raise typer.Exit(code=1)
     except InstallError as e:
         typer.echo(f"\nSetup failed during {e.step}:\n\n{e.message}")
+        if e.action:
+            typer.echo(f"\nWhat to do: {e.action}")
         raise typer.Exit(code=1)
-    typer.echo("\nSetup complete.")
 
 
 @app.command()

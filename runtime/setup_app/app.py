@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from runtime.core.install import (
-    DeadEnd, InstallError, Progress, RebootRequired, run_install,
+    RESUME_NOTICE, DeadEnd, InstallError, Progress, RebootRequired, run_install,
 )
 
 _LABELS = {
@@ -17,19 +17,29 @@ _LABELS = {
     "create_vm": "Creating the virtual machine",
     "bootstrap": "Installing Docker",
     "verify": "Testing the setup",
+    "finish": "Finishing up",
 }
 _MARKS = {"running": "…", "done": "✓", "failed": "✗", "skipped": "✓", "reboot": "!"}
 
 
-def run_window(steps, state) -> int:
+def run_window(steps, state, *, resumed: bool = False) -> int:
     events: queue.Queue = queue.Queue()
     outcome = {"code": 0, "message": ""}
     finished = {"value": False}
 
+    def record(progress: Progress) -> None:
+        # The finish text is the whole point of the run; it belongs in the
+        # final panel, not scrolled away in the log.
+        if progress.step == "finish" and progress.status == "done":
+            outcome["message"] = progress.message
+            events.put(Progress(progress.step, progress.status))
+            return
+        events.put(progress)
+
     def worker():
         try:
             try:
-                run_install(steps, state, events.put)
+                run_install(steps, state, record)
             except RebootRequired:
                 outcome.update(code=2, message=(
                     "Restart your computer.\n"
@@ -38,7 +48,10 @@ def run_window(steps, state) -> int:
                 outcome.update(code=1, message=
                     f"This computer needs a change before setup can continue:\n\n{e}")
             except InstallError as e:
-                outcome.update(code=1, message=f"Setup failed during {e.step}:\n\n{e.message}")
+                message = f"Setup failed during {e.step}:\n\n{e.message}"
+                if e.action:
+                    message += f"\n\nWhat to do: {e.action}"
+                outcome.update(code=1, message=message)
             except Exception as e:
                 outcome.update(code=1, message=f"Unexpected error: {e}")
         finally:
@@ -46,7 +59,7 @@ def run_window(steps, state) -> int:
 
     root = tk.Tk()
     root.title("Local Runtime Setup")
-    root.geometry("560x420")
+    root.geometry("560x540")
 
     def on_close():
         # User closed the window mid-install; report failure rather than default success.
@@ -59,6 +72,9 @@ def run_window(steps, state) -> int:
     rows: dict[str, tk.StringVar] = {}
     frame = ttk.Frame(root, padding=16)
     frame.pack(fill="both", expand=True)
+    if resumed:
+        ttk.Label(frame, text=RESUME_NOTICE, font=("Segoe UI", 10, "bold"),
+                  wraplength=500).pack(anchor="w", pady=(0, 10))
     for step in steps:
         var = tk.StringVar(value=f"   {_LABELS.get(step.name, step.name)}")
         ttk.Label(frame, textvariable=var, font=("Segoe UI", 10)).pack(anchor="w", pady=2)
@@ -86,8 +102,13 @@ def run_window(steps, state) -> int:
             if event is None:
                 finished["value"] = True
                 bar.stop()
+                bar.pack_forget()
                 if outcome["message"]:
-                    append("\n" + outcome["message"])
+                    # A label, not the log pane: the success text names the next
+                    # command and must not be something the user has to scroll to.
+                    ttk.Label(frame, text=outcome["message"], wraplength=500,
+                              justify="left", font=("Segoe UI", 10)).pack(
+                                  anchor="w", pady=(10, 0))
                 ttk.Button(frame, text="Close", command=root.destroy).pack(pady=8)
                 return
             _render(event, rows, append)

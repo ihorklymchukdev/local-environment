@@ -1,6 +1,7 @@
 from typer.testing import CliRunner
 
 import runtime.cli as cli
+from runtime.core.images import Image
 from runtime.core.install import DeadEnd, RebootRequired
 from runtime.core.provider import CheckResult, Completed, Diagnosis
 
@@ -21,6 +22,7 @@ class StubProvider:
     def create(self): pass
     def exec(self, argv, *, root=False): return Completed(0, "", "")
     def destroy(self): pass
+    def image(self): return Image("http://example.invalid/img.wsl", "0" * 64)
 
 
 class FailingDestroyProvider(StubProvider):

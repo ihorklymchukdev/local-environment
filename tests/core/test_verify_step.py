@@ -36,7 +36,8 @@ def test_verify_passes_on_200_and_tears_the_project_down(template):
         return 200
 
     verify_step(provider, template, "127-0-0-1.sslip.io", http_get=http_get)
-    assert seen == ["http://nginx-hello.127-0-0-1.sslip.io:39080"]
+    assert seen == ["http://runtime-selftest.127-0-0-1.sslip.io:39080"], \
+        "the smoke test must use a reserved id, not the template's folder name"
     assert any("down" in argv for argv in provider.execs), \
         "the smoke-test project must not be left running"
 
@@ -45,6 +46,26 @@ def test_verify_fails_on_a_non_200_status(template):
     with pytest.raises(VerificationFailed, match="502"):
         verify_step(FakeProvider(), template, "127-0-0-1.sslip.io",
                     http_get=lambda url: 502)
+
+
+def test_verify_fails_without_requesting_when_the_stack_is_crash_looping(template):
+    class CrashLooping(FakeProvider):
+        def exec(self, argv, *, root=False):
+            self.execs.append(argv)
+            if "ps" in argv:
+                return Completed(0, '[{"Service":"web","State":"restarting"}]', "")
+            return Completed(0, "", "")
+
+    provider = CrashLooping()
+    requested = []
+
+    with pytest.raises(VerificationFailed, match="crash_looping"):
+        verify_step(provider, template, "127-0-0-1.sslip.io",
+                    http_get=lambda url: requested.append(url) or 200)
+
+    assert requested == [], \
+        "a container that never came up must fail before anything is requested"
+    assert any("down" in argv for argv in provider.execs)
 
 
 def test_verify_tears_down_even_when_the_request_fails(template):
