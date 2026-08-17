@@ -20,3 +20,10 @@ def test_factory_rejects_unsupported(monkeypatch):
         assert False, "expected RuntimeError"
     except RuntimeError as e:
         assert "linux" in str(e).lower()
+
+
+def test_both_providers_satisfy_the_vm_provider_protocol():
+    # Catches a Protocol member added without updating the implementations.
+    from runtime.core.provider import VmProvider
+    assert isinstance(Wsl2Provider(), VmProvider)
+    assert isinstance(LimaProvider(), VmProvider)

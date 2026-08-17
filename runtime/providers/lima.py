@@ -63,3 +63,12 @@ class LimaProvider:
         if guest_port != host_port:
             raise NotImplementedError(
                 "distinct-port forwarding on Lima is not part of the PoC slice")
+
+    def preflight(self) -> Diagnosis:
+        return self.is_supported()
+
+    def apply_remedy(self, remedy: str) -> None:
+        raise ValueError(f"unknown remedy: {remedy}")
+
+    def reboot_required(self) -> bool:
+        return False   # no OS features to enable; Lima needs no restart
