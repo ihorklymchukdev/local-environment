@@ -208,10 +208,21 @@ def uninstall(purge: bool = typer.Option(False, "--purge")):
     import shutil
     from runtime.core.install import InstallState
     from runtime.providers import default_install_dir
-    _provider().destroy()
+
+    destroy_error = None
+    try:
+        _provider().destroy()
+    except Exception as e:
+        destroy_error = e
+
     root = default_install_dir().parent
     InstallState(root / "install-state.json").clear()
     shutil.rmtree(root / "cache", ignore_errors=True)
+
+    if destroy_error is not None:
+        typer.echo(f"The VM could not be removed ({destroy_error}). "
+                   "Local data was cleaned up anyway.")
+        raise typer.Exit(code=1)
     typer.echo("Removed.")
 
 

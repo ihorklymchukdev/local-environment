@@ -20,6 +20,12 @@ class StubProvider:
     def exists(self): return True
     def create(self): pass
     def exec(self, argv, *, root=False): return Completed(0, "", "")
+    def destroy(self): pass
+
+
+class FailingDestroyProvider(StubProvider):
+    def destroy(self):
+        raise RuntimeError("wsl.exe not found")
 
 
 def test_setup_reports_a_dead_end_in_plain_language(monkeypatch):
@@ -47,3 +53,38 @@ def test_uninstall_requires_purge_to_destroy_the_vm(monkeypatch):
     result = runner.invoke(cli.app, ["uninstall"])
     assert result.exit_code == 1
     assert "--purge" in result.stdout
+
+
+def test_uninstall_cleans_up_local_state_even_when_destroy_fails(monkeypatch):
+    from runtime.core.install import InstallState
+    from runtime.providers import default_install_dir
+
+    monkeypatch.setattr(cli, "_provider_factory", lambda: FailingDestroyProvider())
+    root = default_install_dir().parent
+    state = InstallState(root / "install-state.json")
+    state.mark("preflight")
+    cache_dir = root / "cache"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "image.tar").write_text("x")
+
+    result = runner.invoke(cli.app, ["uninstall", "--purge"])
+
+    assert result.exit_code != 0, "a failed destroy must not be reported as success"
+    assert "Traceback" not in result.stdout, "non-technical users must not see a stack trace"
+    assert state.completed() == set(), "local state must be cleared even if destroy fails"
+    assert not cache_dir.exists(), "the cache must be removed even if destroy fails"
+
+
+def test_uninstall_purge_succeeds_and_clears_state(monkeypatch):
+    from runtime.core.install import InstallState
+    from runtime.providers import default_install_dir
+
+    monkeypatch.setattr(cli, "_provider_factory", lambda: StubProvider())
+    root = default_install_dir().parent
+    state = InstallState(root / "install-state.json")
+    state.mark("preflight")
+
+    result = runner.invoke(cli.app, ["uninstall", "--purge"])
+
+    assert result.exit_code == 0
+    assert state.completed() == set()
