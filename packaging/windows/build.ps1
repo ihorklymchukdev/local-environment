@@ -13,6 +13,14 @@ try {
         packaging\windows\runtime.spec
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
 
+    & dist\LocalRuntime\runtime.exe version
+    if ($LASTEXITCODE -ne 0) { throw "Smoke test failed: runtime.exe version." }
+    # version never touches disk, so it can pass on a bundle that's missing a
+    # datas entry; selfcheck resolves each bundled asset the way the real
+    # code does and catches that class of failure before it reaches a user.
+    & dist\LocalRuntime\runtime.exe selfcheck
+    if ($LASTEXITCODE -ne 0) { throw "Smoke test failed: runtime.exe selfcheck reported a missing bundled asset." }
+
     if (-not (Test-Path $InnoSetup)) {
         throw "Inno Setup not found at $InnoSetup. Install it or pass -InnoSetup."
     }

@@ -14,6 +14,7 @@ every run. Do not mark a case passed without recording evidence for it.
 | 4 | Re-run setup on an already-provisioned machine | Idempotency | All steps report skipped; exits 0 quickly | UNRUN | UNRUN | UNRUN |
 | 5 | Uninstall (`runtime uninstall --purge`, invoked by the Inno `[UninstallRun]` entry) | Cleanup | `wsl -l -v` no longer lists `runtime-vm`; cache directory gone | UNRUN | UNRUN | UNRUN |
 | 6 | Setup window (`runtime/setup_app/app.py`) observed during cases 1-5 | The tkinter progress window itself — it has no automated coverage of any kind and cannot even be imported on this dev machine (no tkinter), so this row is its only verification | Window appears, shows per-step progress, and can be closed on every outcome (success, dead end, and failure) | UNRUN | UNRUN | UNRUN |
+| 7 | `dist\LocalRuntime\runtime.exe selfcheck` run directly against the frozen build (any machine from cases 1-5) | That the bundled assets (`bootstrap.sh`, `traefik.yml`, the nginx-hello template, `runtime.yaml`) actually resolve inside the frozen exe, not just in the source tree | Prints `OK` for all four assets and exits 0 | UNRUN | UNRUN | UNRUN |
 
 ## Notes for the operator
 
@@ -23,11 +24,17 @@ every run. Do not mark a case passed without recording evidence for it.
   rather than marking it passed or skipping the row.
 - **Case 5** exercises `runtime uninstall --purge`, which is destructive: it
   destroys the VM and every project inside it. Only run it against a machine
-  whose VM state is disposable.
+  whose VM state is disposable. The uninstaller now shows a confirmation
+  dialog naming that consequence before it runs; declining it must abort the
+  uninstall entirely (files and registry entries left in place).
 - **Case 6** has no fixed machine state of its own — observe the setup window
   while running cases 1, 2, 3, and 5 (any path that launches
   `runtime.exe setup`) and record what was seen for each: does the window
   appear, does progress update per step, does closing it behave correctly
   whether setup succeeded, hit a dead end, or failed.
-- Cases 1, 4, and 5 can be run on the development machine. Cases 2 and 3
+- **Case 7** is also run automatically inside `build.ps1` as part of the
+  build's own smoke test; this row is for confirming it still reports OK
+  against the actual installed copy on a target machine, not just at build
+  time on the build machine.
+- Cases 1, 4, 5, and 7 can be run on the development machine. Cases 2 and 3
   require a VM.

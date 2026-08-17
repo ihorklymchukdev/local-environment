@@ -88,3 +88,26 @@ def test_uninstall_purge_succeeds_and_clears_state(monkeypatch):
 
     assert result.exit_code == 0
     assert state.completed() == set()
+
+
+def test_selfcheck_reports_ok_for_all_four_bundled_assets():
+    result = runner.invoke(cli.app, ["selfcheck"])
+    assert result.exit_code == 0
+    for name in ("bootstrap.sh", "traefik.yml", "docker-compose.yml", "runtime.yaml"):
+        assert name in result.stdout
+    assert "MISSING" not in result.stdout
+
+
+def test_selfcheck_reports_missing_and_exits_nonzero_when_an_asset_cannot_resolve(
+        monkeypatch, tmp_path):
+    import runtime.providers as providers
+
+    # Simulate a frozen build whose datas entry for runtime.yaml went missing:
+    # __file__ is what the real resolution (Path(__file__).parent) depends on.
+    monkeypatch.setattr(providers, "__file__", str(tmp_path / "nonexistent" / "__init__.py"))
+
+    result = runner.invoke(cli.app, ["selfcheck"])
+
+    assert result.exit_code == 1
+    assert "MISSING" in result.stdout
+    assert "runtime.yaml" in result.stdout

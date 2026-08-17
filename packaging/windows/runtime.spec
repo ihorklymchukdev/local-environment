@@ -1,6 +1,5 @@
 # PyInstaller one-dir. One-file unpacks to a temp dir on every launch and is
 # the mode antivirus heuristics dislike most; the installer wraps this anyway.
-from PyInstaller.utils.hooks import collect_data_files
 
 a = Analysis(
     ["../../runtime/cli.py"],

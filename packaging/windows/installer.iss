@@ -32,8 +32,11 @@ Filename: "{app}\runtime.exe"; Parameters: "uninstall --purge"; \
   Flags: runhidden; RunOnceId: "PurgeVm"
 
 [Registry]
+; uninsdeletevalue only removes the whole Path value, never a single segment
+; within it; NeedsAddPath below already avoids appending a duplicate, and the
+; installed {app} segment is left behind on uninstall as a result.
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; \
-  ValueData: "{olddata};{app}"; Check: NeedsAddPath('{app}')
+  ValueData: "{olddata};{app}"; Check: NeedsAddPath('{app}'); Flags: uninsdeletevalue
 
 [Code]
 function NeedsAddPath(Param: string): boolean;
@@ -42,4 +45,14 @@ begin
   if not RegQueryStringValue(HKCU, 'Environment', 'Path', OrigPath) then
   begin Result := True; exit; end;
   Result := Pos(';' + ExpandConstant(Param) + ';', ';' + OrigPath + ';') = 0;
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  Result := MsgBox(
+    'Uninstalling Local Runtime permanently deletes the VM and every ' +
+    'project inside it. Project files live inside the VM, not on this ' +
+    'PC, so nothing is recoverable afterward.' + #13#10#13#10 +
+    'Continue with uninstall?',
+    mbConfirmation, MB_YESNO) = IDYES;
 end;

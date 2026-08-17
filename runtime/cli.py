@@ -226,5 +226,35 @@ def uninstall(purge: bool = typer.Option(False, "--purge")):
     typer.echo("Removed.")
 
 
+@app.command()
+def selfcheck():
+    """Verify bundled assets resolve on disk, the way the real code reads them.
+
+    A frozen build can pass `version` while still missing a bundled asset —
+    `version` never touches disk. This walks the same resolution each asset's
+    real caller uses, so a packaging mistake (a bad PyInstaller `datas` entry)
+    is caught by running the exe, not discovered by a user mid-setup.
+    """
+    from pathlib import Path
+    from runtime.core.bootstrap import _ASSETS
+    import runtime.providers as _providers
+
+    checks = [
+        ("runtime/guest/bootstrap.sh", _ASSETS / "bootstrap.sh"),
+        ("runtime/guest/traefik.yml", _ASSETS / "traefik.yml"),
+        ("runtime/templates/nginx-hello/docker-compose.yml",
+         Path(__file__).resolve().parent / "templates" / "nginx-hello" / "docker-compose.yml"),
+        ("runtime/providers/runtime.yaml", Path(_providers.__file__).parent / "runtime.yaml"),
+    ]
+
+    all_ok = True
+    for label, path in checks:
+        ok = path.is_file()
+        all_ok = all_ok and ok
+        typer.echo(f"{'OK' if ok else 'MISSING':<7} {label} -> {path}")
+
+    raise typer.Exit(code=0 if all_ok else 1)
+
+
 if __name__ == "__main__":
     app()
