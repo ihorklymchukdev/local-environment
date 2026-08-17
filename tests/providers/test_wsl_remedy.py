@@ -1,6 +1,6 @@
 import pytest
 
-from runtime.providers.wsl2 import RUNONCE_KEY, Wsl2Provider
+from runtime.providers.wsl2 import ELEVATION_DECLINED, RUNONCE_KEY, Wsl2Provider
 
 HEALTHY_FACTS = dict(
     wsl_version_text="WSL version: 2.3.26.0", build=26100,
@@ -29,10 +29,19 @@ def test_enable_features_remedy_runs_elevated_not_in_process():
 
 
 def test_a_declined_uac_prompt_raises():
-    # ShellExecuteW returns a non-zero exit code when the user says No.
-    provider = make(elevator=lambda exe, args: 1223)
+    provider = make(elevator=lambda exe, args: ELEVATION_DECLINED)
     with pytest.raises(RuntimeError, match="administrator"):
         provider.apply_remedy("enable_wsl_features")
+
+
+def test_an_elevated_command_that_ran_but_failed_is_not_a_success():
+    # The elevator returns the child's real exit code, so `wsl --install`
+    # rejected by policy must not leave the run believing features are on.
+    provider = make(elevator=lambda exe, args: 4294967295)
+    with pytest.raises(RuntimeError, match="failed"):
+        provider.apply_remedy("enable_wsl_features")
+    assert provider.reboot_required() is False, \
+        "a failed feature enablement must not ask the user to reboot"
 
 
 def test_unknown_remedy_is_a_programming_error():

@@ -13,9 +13,16 @@ from .wsl_checks import diagnose_wsl2, preflight_checks
 RUNONCE_KEY = r"Software\Microsoft\Windows\CurrentVersion\RunOnce"
 _RESUME_VALUE_NAME = "LocalRuntimeSetup"
 
+# The user clicked No on the UAC prompt (ERROR_CANCELLED).
+ELEVATION_DECLINED = 1223
+
+# Absent off Windows, where this module is still imported by the test suite.
+# 0 is "no extra creation flags", which is what every non-Windows Popen wants.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 def _default_runner(argv):
-    return subprocess.run(argv, capture_output=True)
+    return subprocess.run(argv, capture_output=True, creationflags=_NO_WINDOW)
 
 
 def _default_facts() -> dict:
@@ -23,14 +30,16 @@ def _default_facts() -> dict:
 
     def wmi(query: str) -> str:
         out = subprocess.run(["powershell", "-NoProfile", "-Command", query],
-                             capture_output=True)
+                             capture_output=True, creationflags=_NO_WINDOW)
         return out.stdout.decode("utf-8", "replace").strip()
 
-    version = subprocess.run(["wsl.exe", "--version"], capture_output=True)
+    version = subprocess.run(["wsl.exe", "--version"], capture_output=True,
+                             creationflags=_NO_WINDOW)
     # `wsl --status`'s exit code alone tells us the OS features are on,
     # without an elevated Get-WindowsOptionalFeature/DISM call: preflight
     # must stay unelevated so apply_remedy's UAC prompt is the only one.
-    status = subprocess.run(["wsl.exe", "--status"], capture_output=True)
+    status = subprocess.run(["wsl.exe", "--status"], capture_output=True,
+                            creationflags=_NO_WINDOW)
     return {
         "wsl_version_text": decode_wsl(version.stdout),
         "build": sys.getwindowsversion().build,
@@ -48,12 +57,73 @@ def _default_facts() -> dict:
 
 
 def _default_elevator(exe: str, args: list[str]) -> int:
+    """Run `exe args` elevated, wait for it, and return its real exit code.
+
+    ShellExecuteW cannot be used here: it reports success as soon as the
+    process is *launched*, so a `wsl --install` that Windows Update or group
+    policy rejected would be recorded as a success. ShellExecuteExW with
+    SEE_MASK_NOCLOSEPROCESS hands back a process handle to wait on, which also
+    makes back-to-back remedies serial instead of concurrent.
+    """
     import ctypes
-    # SW_SHOWNORMAL=1. ShellExecuteW returns >32 on success; the UAC prompt
-    # being declined returns 5 (ACCESS_DENIED).
-    result = ctypes.windll.shell32.ShellExecuteW(
-        None, "runas", exe, " ".join(args), None, 1)
-    return 0 if result > 32 else int(result)
+    from ctypes import wintypes
+
+    SEE_MASK_NOCLOSEPROCESS = 0x00000040
+    SEE_MASK_NOASYNC = 0x00000100      # keep the call valid past our own return
+    INFINITE = 0xFFFFFFFF
+    SW_SHOWNORMAL = 1
+
+    class SHELLEXECUTEINFOW(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("fMask", wintypes.ULONG),
+            ("hwnd", wintypes.HWND),
+            ("lpVerb", wintypes.LPCWSTR),
+            ("lpFile", wintypes.LPCWSTR),
+            ("lpParameters", wintypes.LPCWSTR),
+            ("lpDirectory", wintypes.LPCWSTR),
+            ("nShow", ctypes.c_int),
+            ("hInstApp", wintypes.HINSTANCE),
+            ("lpIDList", ctypes.c_void_p),
+            ("lpClass", wintypes.LPCWSTR),
+            ("hkeyClass", wintypes.HKEY),
+            ("dwHotKey", wintypes.DWORD),
+            ("hIcon", wintypes.HANDLE),     # union with hMonitor
+            ("hProcess", wintypes.HANDLE),
+        ]
+
+    shell32 = ctypes.windll.shell32
+    kernel32 = ctypes.windll.kernel32
+    shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(SHELLEXECUTEINFOW)]
+    shell32.ShellExecuteExW.restype = wintypes.BOOL
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE,
+                                            ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    info = SHELLEXECUTEINFOW()
+    info.cbSize = ctypes.sizeof(SHELLEXECUTEINFOW)
+    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC
+    info.lpVerb = "runas"
+    info.lpFile = exe
+    info.lpParameters = " ".join(args)
+    info.nShow = SW_SHOWNORMAL
+
+    if not shell32.ShellExecuteExW(ctypes.byref(info)):
+        # A declined UAC prompt lands here as ERROR_CANCELLED (1223).
+        return ctypes.GetLastError() or 1
+    if not info.hProcess:
+        return 1
+    try:
+        kernel32.WaitForSingleObject(info.hProcess, INFINITE)
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(info.hProcess, ctypes.byref(code)):
+            return ctypes.GetLastError() or 1
+        return int(code.value)
+    finally:
+        kernel32.CloseHandle(info.hProcess)
 
 
 def _default_registry_writer(key: str, name: str, value: str) -> None:
@@ -151,10 +221,16 @@ class Wsl2Provider:
         args = (["--install", "--no-distribution"] if remedy == "enable_wsl_features"
                 else ["--update"])
         code = self._elevate(self.wsl, args)
-        if code != 0:
+        if code == ELEVATION_DECLINED:
             raise RuntimeError(
                 f"`wsl {' '.join(args)}` needs administrator approval "
-                f"(exit {code}). Re-run setup and choose Yes when Windows asks.")
+                "(the permission prompt was dismissed). Re-run setup and "
+                "choose Yes when Windows asks.")
+        if code != 0:
+            raise RuntimeError(
+                f"`wsl {' '.join(args)}` was approved but failed (exit {code}). "
+                "Windows Update may be busy, or company policy may block WSL. "
+                "Restart the computer and run setup again.")
         if remedy == "enable_wsl_features":
             self._features_enabled = True
 
