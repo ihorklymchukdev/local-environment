@@ -222,9 +222,17 @@ def uninstall(purge: bool = typer.Option(False, "--purge")):
     except Exception as e:
         destroy_error = e
 
-    root = default_install_dir().parent
+    install_dir = default_install_dir()
+    root = install_dir.parent
     InstallState(root / "install-state.json").clear()
     shutil.rmtree(root / "cache", ignore_errors=True)
+    # The VM's own directory: wsl --unregister normally empties it, but a
+    # failed or partial destroy leaves a multi-gigabyte vhdx behind.
+    shutil.rmtree(install_dir, ignore_errors=True)
+    try:
+        (root / "state.db").unlink(missing_ok=True)
+    except OSError as e:
+        typer.echo(f"Could not remove {root / 'state.db'} ({e}).")
 
     if destroy_error is not None:
         typer.echo(f"The VM could not be removed ({destroy_error}). "

@@ -30,9 +30,11 @@ every run. Do not mark a case passed without recording evidence for it.
   uninstall entirely (files and registry entries left in place).
 - **Case 6** has no fixed machine state of its own — observe the setup window
   while running cases 1, 2, 3, and 5 (any path that launches
-  `runtime.exe setup`) and record what was seen for each: does the window
-  appear, does progress update per step, does closing it behave correctly
-  whether setup succeeded, hit a dead end, or failed.
+  `setup.exe setup`) and record what was seen for each: does the window
+  appear, does progress update per step, does the success panel name the
+  install location and `runtime up <folder>`, does closing it behave correctly
+  whether setup succeeded, hit a dead end, or failed. Also confirm no black
+  console windows flash while the guest commands run.
 - **Case 7** is also run automatically inside `build.ps1` as part of the
   build's own smoke test; this row is for confirming it still reports OK
   against the actual installed copy on a target machine, not just at build
