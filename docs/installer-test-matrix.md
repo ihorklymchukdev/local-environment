@@ -15,6 +15,7 @@ every run. Do not mark a case passed without recording evidence for it.
 | 5 | Uninstall (`runtime uninstall --purge`, invoked by the Inno `[UninstallRun]` entry) | Cleanup | `wsl -l -v` no longer lists `runtime-vm`; cache directory gone | UNRUN | UNRUN | UNRUN |
 | 6 | Setup window (`runtime/setup_app/app.py`) observed during cases 1-5 | The tkinter progress window itself — it has no automated coverage of any kind and cannot even be imported on this dev machine (no tkinter), so this row is its only verification | Window appears, shows per-step progress, and can be closed on every outcome (success, dead end, and failure) | UNRUN | UNRUN | UNRUN |
 | 7 | `dist\LocalRuntime\runtime.exe selfcheck` run directly against the frozen build (any machine from cases 1-5) | That the bundled assets (`bootstrap.sh`, `traefik.yml`, the nginx-hello template, `runtime.yaml`) actually resolve inside the frozen exe, not just in the source tree | Prints `OK` for all four assets and exits 0 | UNRUN | UNRUN | UNRUN |
+| 8 | PATH before vs. after uninstall (case 5's machine) | Uninstall does not corrupt other applications' PATH entries — it only ever appends, and deliberately leaves its own stale segment behind rather than editing the value | Every PATH entry present before uninstall other than `{app}` is still present, unmodified, after uninstall | UNRUN | UNRUN | UNRUN |
 
 ## Notes for the operator
 
@@ -36,5 +37,10 @@ every run. Do not mark a case passed without recording evidence for it.
   build's own smoke test; this row is for confirming it still reports OK
   against the actual installed copy on a target machine, not just at build
   time on the build machine.
-- Cases 1, 4, 5, and 7 can be run on the development machine. Cases 2 and 3
+- **Case 8** should be checked with
+  `reg query HKCU\Environment /v Path` captured right before and right after
+  case 5's uninstall. Expect an unchanged value except that the `{app}`
+  segment remains (this is the accepted, deliberate limitation — see the
+  `[Registry]` comment in `installer.iss`), not any other entry disturbed.
+- Cases 1, 4, 5, 7, and 8 can be run on the development machine. Cases 2 and 3
   require a VM.

@@ -32,11 +32,10 @@ Filename: "{app}\runtime.exe"; Parameters: "uninstall --purge"; \
   Flags: runhidden; RunOnceId: "PurgeVm"
 
 [Registry]
-; uninsdeletevalue only removes the whole Path value, never a single segment
-; within it; NeedsAddPath below already avoids appending a duplicate, and the
-; installed {app} segment is left behind on uninstall as a result.
+; {app} stays in Path after uninstall on purpose: surgically removing it
+; risks corrupting PATH, and Windows ignores PATH entries that don't exist.
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; \
-  ValueData: "{olddata};{app}"; Check: NeedsAddPath('{app}'); Flags: uninsdeletevalue
+  ValueData: "{olddata};{app}"; Check: NeedsAddPath('{app}')
 
 [Code]
 function NeedsAddPath(Param: string): boolean;
@@ -54,5 +53,5 @@ begin
     'project inside it. Project files live inside the VM, not on this ' +
     'PC, so nothing is recoverable afterward.' + #13#10#13#10 +
     'Continue with uninstall?',
-    mbConfirmation, MB_YESNO) = IDYES;
+    mbConfirmation, MB_YESNO + MB_DEFBUTTON2) = IDYES;
 end;
