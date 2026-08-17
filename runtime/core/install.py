@@ -74,3 +74,25 @@ def run_install(steps: list[Step], state: InstallState,
             raise InstallError(step.name, str(e)) from e
         state.mark(step.name)
         report(Progress(step.name, "done"))
+
+
+class DeadEnd(RuntimeError):
+    """A blocking check no code can fix — the user must act."""
+
+
+def preflight_step(provider) -> None:
+    diagnosis = provider.preflight()
+    dead = diagnosis.dead_ends
+    if dead:
+        raise DeadEnd("\n".join(
+            f"{c.label}: {c.fix}" if c.fix else c.label for c in dead))
+
+
+def remediate_step(provider) -> None:
+    for check in provider.preflight().fixable:
+        provider.apply_remedy(check.remedy)
+
+
+def reboot_gate_step(provider) -> None:
+    if provider.reboot_required():
+        raise RebootRequired()

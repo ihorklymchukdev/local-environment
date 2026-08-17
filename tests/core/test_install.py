@@ -1,8 +1,10 @@
 import pytest
 
 from runtime.core.install import (
-    InstallError, InstallState, Progress, RebootRequired, Step, run_install,
+    DeadEnd, InstallError, InstallState, Progress, RebootRequired, Step,
+    preflight_step, reboot_gate_step, remediate_step, run_install,
 )
+from runtime.core.provider import CheckResult, Diagnosis
 
 
 def _recorder():
@@ -87,3 +89,57 @@ def test_reboot_marks_the_step_so_resume_moves_past_it(tmp_path):
     assert state.completed() == {"gate"}, \
         "the gate is satisfied by the reboot itself; resume must not re-trigger it"
     assert any(e.status == "reboot" for e in events)
+
+
+class FakeHost:
+    def __init__(self, diagnosis, reboot=False):
+        self._diagnosis = diagnosis
+        self._reboot = reboot
+        self.applied = []
+
+    def preflight(self):
+        return self._diagnosis
+
+    def apply_remedy(self, remedy):
+        self.applied.append(remedy)
+
+    def reboot_required(self):
+        return self._reboot
+
+
+def test_preflight_raises_dead_end_with_the_users_instructions():
+    host = FakeHost(Diagnosis([
+        CheckResult("virtualization enabled", False,
+                    fix="Restart into BIOS and enable Intel VT-x or AMD-V"),
+    ]))
+    with pytest.raises(DeadEnd, match="VT-x"):
+        preflight_step(host)
+
+
+def test_preflight_passes_when_only_fixable_checks_fail():
+    host = FakeHost(Diagnosis([
+        CheckResult("wsl features", False, fix="we enable it", remedy="enable_wsl_features"),
+    ]))
+    preflight_step(host)      # must not raise — step 2 handles this
+
+
+def test_remediate_applies_only_fixable_remedies():
+    host = FakeHost(Diagnosis([
+        CheckResult("fine", True),
+        CheckResult("wsl features", False, fix="x", remedy="enable_wsl_features"),
+        CheckResult("wsl outdated", False, fix="y", remedy="update_wsl"),
+    ]))
+    remediate_step(host)
+    assert host.applied == ["enable_wsl_features", "update_wsl"]
+
+
+def test_remediate_does_nothing_when_everything_passes():
+    host = FakeHost(Diagnosis([CheckResult("fine", True)]))
+    remediate_step(host)
+    assert host.applied == []
+
+
+def test_reboot_gate_raises_only_when_the_provider_says_so():
+    reboot_gate_step(FakeHost(Diagnosis([]), reboot=False))    # no raise
+    with pytest.raises(RebootRequired):
+        reboot_gate_step(FakeHost(Diagnosis([]), reboot=True))
