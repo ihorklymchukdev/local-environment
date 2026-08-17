@@ -151,5 +151,69 @@ def destroy(project_id: str):
     typer.echo(f"{project_id} destroyed.")
 
 
+@app.command()
+def setup(resume: bool = typer.Option(False, "--resume"),
+          headless: bool = typer.Option(False, "--headless")):
+    """Set up everything: check the host, create the VM, install Docker."""
+    import sys as _sys
+    from pathlib import Path
+    from runtime.core import constants
+    from runtime.core.install import (
+        DeadEnd, InstallError, InstallState, Progress, RebootRequired,
+        default_steps, run_install,
+    )
+    from runtime.providers import default_install_dir
+
+    root = default_install_dir().parent
+    provider = _provider()
+    state = InstallState(root / "install-state.json")
+    steps = default_steps(
+        provider,
+        cache_dir=root / "cache",
+        template_dir=Path(__file__).resolve().parent / "templates" / "nginx-hello",
+        domain=constants.DEFAULT_DOMAIN,
+        exe_path=_sys.executable,
+    )
+
+    def report(progress: Progress):
+        if progress.status in ("running", "done", "failed"):
+            typer.echo(f"[{progress.status:>7}] {progress.step} {progress.message}".rstrip())
+
+    if not headless:
+        from runtime.setup_app.app import run_window
+        raise typer.Exit(code=run_window(steps, state))
+
+    try:
+        run_install(steps, state, report)
+    except RebootRequired:
+        typer.echo("\nRestart your computer. Setup will continue on its own "
+                   "when you log back in.")
+        raise typer.Exit(code=2)
+    except DeadEnd as e:
+        typer.echo(f"\nThis computer needs a change before setup can continue:\n\n{e}")
+        raise typer.Exit(code=1)
+    except InstallError as e:
+        typer.echo(f"\nSetup failed during {e.step}:\n\n{e.message}")
+        raise typer.Exit(code=1)
+    typer.echo("\nSetup complete.")
+
+
+@app.command()
+def uninstall(purge: bool = typer.Option(False, "--purge")):
+    """Remove the VM and all cached data. Destroys every project inside it."""
+    if not purge:
+        typer.echo("This destroys the VM and every project inside it. "
+                   "Re-run with --purge to confirm.")
+        raise typer.Exit(code=1)
+    import shutil
+    from runtime.core.install import InstallState
+    from runtime.providers import default_install_dir
+    _provider().destroy()
+    root = default_install_dir().parent
+    InstallState(root / "install-state.json").clear()
+    shutil.rmtree(root / "cache", ignore_errors=True)
+    typer.echo("Removed.")
+
+
 if __name__ == "__main__":
     app()

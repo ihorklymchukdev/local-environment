@@ -69,6 +69,9 @@ def run_install(steps: list[Step], state: InstallState,
             state.mark(step.name)
             report(Progress(step.name, "reboot"))
             raise
+        except DeadEnd as e:
+            report(Progress(step.name, "failed", str(e)))
+            raise
         except Exception as e:
             report(Progress(step.name, "failed", str(e)))
             raise InstallError(step.name, str(e)) from e
@@ -133,3 +136,33 @@ def verify_step(provider, template_dir, domain: str, *,
             raise VerificationFailed(f"{urls[0]} returned HTTP {code}, expected 200")
     finally:
         compose_down(provider, project.id)
+
+
+def default_steps(provider, *, cache_dir, template_dir, domain,
+                  exe_path: str) -> list[Step]:
+    from .download import fetch
+
+    def fetch_image():
+        image = provider.image()
+        dest = Path(cache_dir) / image.url.rsplit("/", 1)[-1]
+        provider.rootfs = fetch(image, dest)
+
+    def gate():
+        if provider.reboot_required():
+            provider.register_resume(exe_path)
+        reboot_gate_step(provider)
+
+    return [
+        Step("preflight", lambda: preflight_step(provider)),
+        Step("remediate", lambda: remediate_step(provider)),
+        Step("reboot_gate", gate),
+        Step("fetch_image", fetch_image),
+        Step("create_vm", lambda: None if provider.exists() else provider.create()),
+        Step("bootstrap", lambda: _bootstrap(provider)),
+        Step("verify", lambda: verify_step(provider, template_dir, domain)),
+    ]
+
+
+def _bootstrap(provider) -> None:
+    from .bootstrap import bootstrap
+    bootstrap(provider)
