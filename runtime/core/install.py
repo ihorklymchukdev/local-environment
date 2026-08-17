@@ -96,3 +96,40 @@ def remediate_step(provider) -> None:
 def reboot_gate_step(provider) -> None:
     if provider.reboot_required():
         raise RebootRequired()
+
+
+class VerificationFailed(RuntimeError):
+    """The smoke-test project did not serve a successful response."""
+
+
+def _default_http_get(url: str) -> int:
+    from urllib.request import urlopen
+    with urlopen(url, timeout=30) as response:
+        return response.status
+
+
+def verify_step(provider, template_dir, domain: str, *,
+                http_get=_default_http_get) -> None:
+    """Run the bundled template end to end and require HTTP 200."""
+    import yaml
+
+    from . import constants
+    from .lifecycle import compose_down, compose_up, push_project
+    from .project import STARTED_OK, load_project
+
+    template_dir = Path(template_dir)
+    compose = yaml.safe_load((template_dir / "docker-compose.yml").read_text()) or {}
+    project = load_project(compose, None, template_dir.name)
+    try:
+        push_project(provider, project.id, template_dir)
+        status, urls = compose_up(provider, project, template_dir, domain)
+        if status != STARTED_OK:
+            raise VerificationFailed(f"smoke-test project status: {status}")
+        try:
+            code = http_get(urls[0])
+        except Exception as e:
+            raise VerificationFailed(f"{urls[0]} did not respond: {e}") from e
+        if code != 200:
+            raise VerificationFailed(f"{urls[0]} returned HTTP {code}, expected 200")
+    finally:
+        compose_down(provider, project.id)
