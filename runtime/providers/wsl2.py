@@ -92,8 +92,12 @@ def _default_elevator(exe: str, args: list[str]) -> int:
             ("hProcess", wintypes.HANDLE),
         ]
 
-    shell32 = ctypes.windll.shell32
-    kernel32 = ctypes.windll.kernel32
+    # use_last_error keeps a private copy of the thread error taken right at the
+    # call boundary. ctypes.GetLastError() reads the live value, which any
+    # intervening Win32 call can clobber — and the value that matters here is
+    # ERROR_CANCELLED, the most common failure the installer sees.
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(SHELLEXECUTEINFOW)]
     shell32.ShellExecuteExW.restype = wintypes.BOOL
     kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
@@ -113,14 +117,14 @@ def _default_elevator(exe: str, args: list[str]) -> int:
 
     if not shell32.ShellExecuteExW(ctypes.byref(info)):
         # A declined UAC prompt lands here as ERROR_CANCELLED (1223).
-        return ctypes.GetLastError() or 1
+        return ctypes.get_last_error() or 1
     if not info.hProcess:
         return 1
     try:
         kernel32.WaitForSingleObject(info.hProcess, INFINITE)
         code = wintypes.DWORD()
         if not kernel32.GetExitCodeProcess(info.hProcess, ctypes.byref(code)):
-            return ctypes.GetLastError() or 1
+            return ctypes.get_last_error() or 1
         return int(code.value)
     finally:
         kernel32.CloseHandle(info.hProcess)
@@ -228,7 +232,7 @@ class Wsl2Provider:
                 "choose Yes when Windows asks.")
         if code != 0:
             raise RuntimeError(
-                f"`wsl {' '.join(args)}` was approved but failed (exit {code}). "
+                f"`wsl {' '.join(args)}` could not be completed (code {code}). "
                 "Windows Update may be busy, or company policy may block WSL. "
                 "Restart the computer and run setup again.")
         if remedy == "enable_wsl_features":

@@ -38,7 +38,7 @@ def test_an_elevated_command_that_ran_but_failed_is_not_a_success():
     # The elevator returns the child's real exit code, so `wsl --install`
     # rejected by policy must not leave the run believing features are on.
     provider = make(elevator=lambda exe, args: 4294967295)
-    with pytest.raises(RuntimeError, match="failed"):
+    with pytest.raises(RuntimeError, match="could not be completed"):
         provider.apply_remedy("enable_wsl_features")
     assert provider.reboot_required() is False, \
         "a failed feature enablement must not ask the user to reboot"
