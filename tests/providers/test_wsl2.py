@@ -17,11 +17,11 @@ class FakeRunner:
         return R()
 
 
-def make(runner):
+def make(runner, install_dir=Path("/tmp/inst"), rootfs=Path("/tmp/ubuntu.tar.gz")):
     return Wsl2Provider(
         distro="runtime-vm",
-        install_dir=Path("/tmp/inst"),
-        rootfs=Path("/tmp/ubuntu.tar.gz"),
+        install_dir=install_dir,
+        rootfs=rootfs,
         wsl="wsl.exe",
         runner=runner,
     )
@@ -53,19 +53,43 @@ def test_exists_false_when_absent():
     assert make(r).exists() is False
 
 
-def test_create_imports_then_enables_systemd_then_terminates():
+def test_create_imports_then_enables_systemd_then_terminates(tmp_path):
+    rootfs = tmp_path / "ubuntu.tar.gz"
+    rootfs.write_bytes(b"")
+    install = tmp_path / "inst"
     r = FakeRunner()
-    make(r).create()
+    make(r, install_dir=install, rootfs=rootfs).create()
     argvs = r.calls
     assert argvs[0][:2] == ["wsl.exe", "--import"]
     assert argvs[0][2] == "runtime-vm"
-    assert "/tmp/inst" in argvs[0][3]
-    assert "/tmp/ubuntu.tar.gz" in argvs[0][4]
+    assert str(install) in argvs[0][3]
+    assert str(rootfs) in argvs[0][4]
     assert argvs[0][-2:] == ["--version", "2"]
     # systemd fixup runs as root, writes wsl.conf
     assert any("-u" in a and "root" in a and "wsl.conf" in " ".join(a) for a in argvs)
     # ends by terminating so systemd takes effect
     assert argvs[-1] == ["wsl.exe", "--terminate", "runtime-vm"]
+
+
+def test_create_rejects_a_rootfs_path_that_does_not_exist():
+    r = FakeRunner()
+    try:
+        make(r, rootfs=Path("/tmp/definitely-not-here.wsl")).create()
+        assert False, "expected FileNotFoundError"
+    except FileNotFoundError as e:
+        assert "definitely-not-here" in str(e)
+    assert r.calls == [], "must not shell out to wsl.exe with a bad rootfs"
+
+
+def test_create_raises_when_import_fails(tmp_path):
+    rootfs = tmp_path / "ubuntu.tar.gz"
+    rootfs.write_bytes(b"")
+    r = FakeRunner(stderr="Invalid distro name".encode("utf-16-le"), returncode=1)
+    try:
+        make(r, install_dir=tmp_path / "inst", rootfs=rootfs).create()
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        assert "Invalid distro name" in str(e)
 
 
 def test_stop_terminates_and_destroy_unregisters():

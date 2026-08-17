@@ -36,9 +36,15 @@ class Wsl2Provider:
     def create(self) -> None:
         if self.install_dir is None or self.rootfs is None:
             raise ValueError("install_dir and rootfs are required to create the VM")
+        if not self.rootfs.exists():
+            raise FileNotFoundError(f"rootfs not found: {self.rootfs}")
         self.install_dir.mkdir(parents=True, exist_ok=True)
-        self._meta(["--import", self.distro, str(self.install_dir),
-                    str(self.rootfs), "--version", "2"])
+        imported = self._meta(["--import", self.distro, str(self.install_dir),
+                               str(self.rootfs), "--version", "2"])
+        if not imported.ok:
+            raise RuntimeError(
+                f"wsl --import failed (exit {imported.returncode}): "
+                f"{(imported.stderr or imported.stdout).strip()}")
         # systemd is off by default in WSL; docker.service needs it.
         self.exec(["bash", "-lc", "printf '[boot]\\nsystemd=true\\n' > /etc/wsl.conf"],
                   root=True)

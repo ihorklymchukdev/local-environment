@@ -39,14 +39,19 @@ app.add_typer(vm, name="vm")
 @vm.command("create")
 def vm_create():
     """Create the VM and bootstrap Docker + Traefik inside it."""
-    from runtime.core.bootstrap import bootstrap
+    from runtime.core.bootstrap import bootstrap, BootstrapError
     p = _provider()
     if p.exists():
         typer.echo("VM already exists; bootstrapping (idempotent).")
     else:
         typer.echo("Creating VM…")
         p.create()
-    bootstrap(p)
+    typer.echo("Installing Docker + Traefik in the VM (a few minutes)…")
+    try:
+        bootstrap(p)
+    except BootstrapError as e:
+        typer.echo(f"\nBootstrap failed.\n{e}")
+        raise typer.Exit(code=1)
     typer.echo("VM ready.")
 
 

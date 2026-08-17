@@ -36,6 +36,21 @@ def test_vm_create_creates_when_absent(monkeypatch):
     assert "VM ready." in result.stdout
 
 
+def test_vm_create_fails_loudly_when_guest_bootstrap_fails(monkeypatch):
+    class FailingProvider(FakeProvider):
+        def exec(self, argv, *, root=False):
+            self.execs.append(argv)
+            if "cat" in argv:
+                return Completed(1, "", "")          # no marker yet
+            return Completed(1, "", "E: Unable to locate package docker-ce")
+
+    monkeypatch.setattr(cli, "_provider_factory", lambda: FailingProvider(exists=True))
+    result = runner.invoke(cli.app, ["vm", "create"])
+    assert result.exit_code == 1
+    assert "VM ready." not in result.stdout
+    assert "docker-ce" in result.stdout
+
+
 def test_vm_create_skips_create_when_present(monkeypatch):
     fake = FakeProvider(exists=True)
     monkeypatch.setattr(cli, "_provider_factory", lambda: fake)
