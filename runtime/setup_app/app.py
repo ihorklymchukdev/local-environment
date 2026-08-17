@@ -24,24 +24,37 @@ _MARKS = {"running": "…", "done": "✓", "failed": "✗", "skipped": "✓", "r
 def run_window(steps, state) -> int:
     events: queue.Queue = queue.Queue()
     outcome = {"code": 0, "message": ""}
+    finished = {"value": False}
 
     def worker():
         try:
-            run_install(steps, state, events.put)
-        except RebootRequired:
-            outcome.update(code=2, message=(
-                "Restart your computer.\n"
-                "Setup will continue on its own when you log back in."))
-        except DeadEnd as e:
-            outcome.update(code=1, message=
-                f"This computer needs a change before setup can continue:\n\n{e}")
-        except InstallError as e:
-            outcome.update(code=1, message=f"Setup failed during {e.step}:\n\n{e.message}")
-        events.put(None)
+            try:
+                run_install(steps, state, events.put)
+            except RebootRequired:
+                outcome.update(code=2, message=(
+                    "Restart your computer.\n"
+                    "Setup will continue on its own when you log back in."))
+            except DeadEnd as e:
+                outcome.update(code=1, message=
+                    f"This computer needs a change before setup can continue:\n\n{e}")
+            except InstallError as e:
+                outcome.update(code=1, message=f"Setup failed during {e.step}:\n\n{e.message}")
+            except Exception as e:
+                outcome.update(code=1, message=f"Unexpected error: {e}")
+        finally:
+            events.put(None)
 
     root = tk.Tk()
     root.title("Local Runtime Setup")
     root.geometry("560x420")
+
+    def on_close():
+        # User closed the window mid-install; report failure rather than default success.
+        if not finished["value"]:
+            outcome.update(code=1, message="Setup was cancelled before completing.")
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", on_close)
 
     rows: dict[str, tk.StringVar] = {}
     frame = ttk.Frame(root, padding=16)
@@ -71,6 +84,7 @@ def run_window(steps, state) -> int:
             except queue.Empty:
                 break
             if event is None:
+                finished["value"] = True
                 bar.stop()
                 if outcome["message"]:
                     append("\n" + outcome["message"])
