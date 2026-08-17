@@ -14,5 +14,12 @@ a = Analysis(
     hiddenimports=["runtime.setup_app.app"],
 )
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, name="runtime", console=False)
-coll = COLLECT(exe, a.binaries, a.datas, name="LocalRuntime")
+
+# Two executables, one Analysis, one entry point. A GUI-subsystem exe has no
+# console, so anything typer echoes from it is discarded and PowerShell does
+# not wait on it ($LASTEXITCODE would be stale). The CLI therefore must be
+# console; the setup window must not be, or it flashes a console behind itself.
+cli_exe = EXE(pyz, a.scripts, exclude_binaries=True, name="runtime", console=True)
+setup_exe = EXE(pyz, a.scripts, exclude_binaries=True, name="setup", console=False)
+
+coll = COLLECT(cli_exe, setup_exe, a.binaries, a.datas, name="LocalRuntime")

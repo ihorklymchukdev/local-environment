@@ -13,6 +13,10 @@ try {
         packaging\windows\runtime.spec
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
 
+    # Only runtime.exe is smoke-tested: setup.exe is the same code frozen for the
+    # GUI subsystem, which PowerShell neither waits on nor reads output from.
+    if (-not (Test-Path dist\LocalRuntime\setup.exe)) { throw "setup.exe was not built." }
+
     & dist\LocalRuntime\runtime.exe version
     if ($LASTEXITCODE -ne 0) { throw "Smoke test failed: runtime.exe version." }
     # version never touches disk, so it can pass on a bundle that's missing a

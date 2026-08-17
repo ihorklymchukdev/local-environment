@@ -20,14 +20,15 @@ WizardStyle=modern
 Source: "..\..\dist\LocalRuntime\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 
 [Icons]
-Name: "{group}\Local Runtime Setup"; Filename: "{app}\runtime.exe"; Parameters: "setup"
+Name: "{group}\Local Runtime Setup"; Filename: "{app}\setup.exe"; Parameters: "setup"
 
 [Run]
-Filename: "{app}\runtime.exe"; Parameters: "setup"; \
+Filename: "{app}\setup.exe"; Parameters: "setup"; \
   Description: "Set up Local Runtime now"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
 ; Destroys the VM and every project inside it before files are removed.
+; Console exe on purpose: the uninstaller must wait for it and read its exit code.
 Filename: "{app}\runtime.exe"; Parameters: "uninstall --purge"; \
   Flags: runhidden; RunOnceId: "PurgeVm"
 
