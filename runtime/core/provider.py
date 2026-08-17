@@ -20,6 +20,7 @@ class CheckResult:
     label: str
     ok: bool
     fix: str | None = None
+    remedy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,14 @@ class Diagnosis:
     def blocking(self) -> list[CheckResult]:
         return [c for c in self.checks if not c.ok]
 
+    @property
+    def dead_ends(self) -> list[CheckResult]:
+        return [c for c in self.blocking if c.remedy is None]
+
+    @property
+    def fixable(self) -> list[CheckResult]:
+        return [c for c in self.blocking if c.remedy is not None]
+
 
 @runtime_checkable
 class VmProvider(Protocol):
@@ -45,3 +54,6 @@ class VmProvider(Protocol):
     def destroy(self) -> None: ...
     def exec(self, argv: list[str], *, root: bool = False) -> Completed: ...
     def forward(self, guest_port: int, host_port: int) -> None: ...
+    def preflight(self) -> Diagnosis: ...
+    def apply_remedy(self, remedy: str) -> None: ...
+    def reboot_required(self) -> bool: ...
