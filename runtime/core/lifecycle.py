@@ -6,6 +6,10 @@ import tarfile
 from pathlib import Path
 
 from . import constants
+
+# Absolute path: Docker Desktop's WSL integration puts its own docker CLI on
+# PATH, and a bare `docker` would send this VM's projects to Desktop's engine.
+DOCKER = "/usr/bin/docker"
 from .project import Project, classify, overlay_yaml
 
 
@@ -15,7 +19,7 @@ def _guest_dir(project_id: str) -> str:
 
 def _compose_argv(project_id: str) -> list[str]:
     d = _guest_dir(project_id)
-    return ["docker", "compose",
+    return [DOCKER, "compose",
             "-f", f"{d}/docker-compose.yml",
             "-f", f"{d}/.runtime/overlay.yml",
             "up", "-d"]
@@ -52,7 +56,7 @@ def _urls(project: Project, domain: str) -> list[str]:
 def compose_up(provider, project: Project, local_dir, domain: str):
     _write_overlay(provider, project, domain)
     up = provider.exec(_compose_argv(project.id), root=True)
-    ps = provider.exec(["docker", "compose", "-f",
+    ps = provider.exec([DOCKER, "compose", "-f",
                         f"{_guest_dir(project.id)}/docker-compose.yml",
                         "ps", "--format", "json"], root=True)
     status = classify(up, ps.stdout)
@@ -61,13 +65,13 @@ def compose_up(provider, project: Project, local_dir, domain: str):
 
 def compose_down(provider, project_id: str):
     d = _guest_dir(project_id)
-    return provider.exec(["docker", "compose", "-f", f"{d}/docker-compose.yml",
+    return provider.exec([DOCKER, "compose", "-f", f"{d}/docker-compose.yml",
                           "-f", f"{d}/.runtime/overlay.yml", "down"], root=True)
 
 
 def project_logs(provider, project_id: str, service: str | None = None) -> str:
     d = _guest_dir(project_id)
-    argv = ["docker", "compose", "-f", f"{d}/docker-compose.yml", "logs", "--no-color"]
+    argv = [DOCKER, "compose", "-f", f"{d}/docker-compose.yml", "logs", "--no-color"]
     if service:
         argv.append(service)
     return provider.exec(argv, root=True).stdout

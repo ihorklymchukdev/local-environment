@@ -20,7 +20,7 @@ class FakeProvider:
 def test_compose_argv_uses_both_files_in_order():
     argv = _compose_argv("myproj")
     d = f"{constants.GUEST_PROJECTS}/myproj"
-    assert argv[:2] == ["docker", "compose"]
+    assert argv[:2] == ["/usr/bin/docker", "compose"]
     assert argv.count("-f") == 2
     assert f"{d}/docker-compose.yml" in argv
     assert f"{d}/.runtime/overlay.yml" in argv

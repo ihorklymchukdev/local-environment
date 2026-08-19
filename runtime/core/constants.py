@@ -1,5 +1,5 @@
 EDGE_PORT = 39080
-BOOTSTRAP_VERSION = 1
+BOOTSTRAP_VERSION = 2
 GUEST_ROOT = "/opt/runtime"
 GUEST_PROJECTS = "/opt/runtime/projects"
 BOOTSTRAP_MARKER = "/opt/runtime/.bootstrapped"

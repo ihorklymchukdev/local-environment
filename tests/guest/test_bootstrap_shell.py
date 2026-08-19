@@ -20,3 +20,23 @@ def test_bootstrap_pins_docker_official_repo_not_docker_io():
 def test_bootstrap_writes_version_marker():
     text = BOOTSTRAP.read_text()
     assert "/opt/runtime/.bootstrapped" in text
+
+
+def test_bootstrap_guards_on_the_package_not_the_docker_binary():
+    # Docker Desktop's WSL integration puts its own docker CLI on PATH. Guarding
+    # on `command -v docker` skipped the install and then failed at
+    # `systemctl enable` with "Unit file docker.service does not exist".
+    code = [l for l in BOOTSTRAP.read_text().splitlines()
+            if not l.lstrip().startswith("#")]
+    assert any("dpkg -s docker-ce" in l for l in code)
+    assert not any("command -v docker" in l for l in code)
+
+
+def test_bootstrap_invokes_docker_by_absolute_path():
+    # A bare `docker` would reach Docker Desktop's CLI when its WSL integration
+    # is on, sending this VM's containers to Desktop's engine instead.
+    import re
+    for line in BOOTSTRAP.read_text().splitlines():
+        stripped = line.strip()
+        if re.match(r"^(\|\||&&)?\s*docker\s", stripped):
+            raise AssertionError(f"bare docker invocation: {stripped}")
