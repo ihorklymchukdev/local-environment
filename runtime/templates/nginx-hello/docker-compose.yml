@@ -1,5 +1,7 @@
 services:
   web:
     image: nginx:alpine
-    ports:
-      - "8080:80"
+    # No published host port: traffic reaches this through Traefik on the edge
+    # network. Publishing one only creates collisions inside the VM.
+    expose:
+      - "80"

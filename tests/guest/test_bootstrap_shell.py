@@ -40,3 +40,14 @@ def test_bootstrap_invokes_docker_by_absolute_path():
         stripped = line.strip()
         if re.match(r"^(\|\||&&)?\s*docker\s", stripped):
             raise AssertionError(f"bare docker invocation: {stripped}")
+
+
+def test_smoke_test_template_publishes_no_host_port():
+    # The template reaches the browser through Traefik on the edge network, so a
+    # published port buys nothing and collides: the first real Windows run died
+    # with "failed to bind host port 0.0.0.0:8080/tcp: address already in use".
+    import yaml
+    compose = yaml.safe_load(
+        (Path("runtime/templates/nginx-hello/docker-compose.yml")).read_text())
+    for name, svc in compose["services"].items():
+        assert not svc.get("ports"), f"{name} publishes a host port"
