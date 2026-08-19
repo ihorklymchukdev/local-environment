@@ -176,8 +176,9 @@ _ACTIONS = {
                    "continues from where it stopped.",
     "create_vm": "The virtual machine could not be created. Restart the computer, "
                  "make sure there is at least 10 GB free, and run setup again.",
-    "bootstrap": "Software could not be installed inside the virtual machine — "
-                 "this usually means the internet connection dropped. Run setup again.",
+    "bootstrap": "Docker could not be installed inside the virtual machine. The "
+                 "detail above comes from inside the VM. Run setup again; if it "
+                 "fails the same way twice, send us that text.",
     "verify": "The test project did not answer. Run setup again; if it fails a "
               "second time, use Copy diagnostics and send us the text.",
 }

@@ -37,7 +37,11 @@ def read_marker(provider) -> int | None:
 
 def _push_file(provider, local: Path, remote: str) -> None:
     # base64 avoids quoting/newline issues over `wsl -- bash -lc`.
-    encoded = base64.b64encode(local.read_bytes()).decode("ascii")
+    # CRLF is stripped here as well as in .gitattributes: the installer is
+    # frozen on Windows, so a checkout with core.autocrlf bundles CRLF assets,
+    # and bash reads `set -euo pipefail\r` as an invalid option.
+    payload = local.read_bytes().replace(b"\r\n", b"\n")
+    encoded = base64.b64encode(payload).decode("ascii")
     _run(provider,
          ["bash", "-lc", f"mkdir -p {_GUEST_DIR} && "
                          f"echo {encoded} | base64 -d > {remote}"],

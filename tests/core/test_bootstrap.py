@@ -82,3 +82,35 @@ def test_bootstrap_raises_when_script_exits_zero_without_writing_marker():
     p = FakeProvider(writes_marker=False)
     with pytest.raises(BootstrapError, match="marker"):
         bootstrap(p)
+
+
+def _pushed_payload(provider, filename):
+    """Decode what _push_file actually sent to the guest for `filename`."""
+    import base64 as _b64
+    for argv, _root in provider.execs:
+        joined = " ".join(argv)
+        if "base64 -d" in joined and joined.rstrip().endswith(filename):
+            blob = joined.split("echo ", 1)[1].split(" |", 1)[0]
+            return _b64.b64decode(blob)
+    raise AssertionError(f"no push recorded for {filename}")
+
+
+def test_push_file_strips_crlf_so_bash_can_read_the_script(tmp_path, monkeypatch):
+    # A Windows checkout (core.autocrlf) turns bootstrap.sh into CRLF. Bash then
+    # reads line 2 as `set -euo pipefail\r` and aborts with "invalid option
+    # name" -- which is exactly how the first real Windows build failed.
+    import runtime.core.bootstrap as bs
+
+    crlf_assets = tmp_path / "guest"
+    crlf_assets.mkdir()
+    (crlf_assets / "bootstrap.sh").write_bytes(b"#!/usr/bin/env bash\r\nset -euo pipefail\r\n")
+    (crlf_assets / "traefik.yml").write_bytes(b"entryPoints:\r\n  web:\r\n")
+    monkeypatch.setattr(bs, "_ASSETS", crlf_assets)
+
+    p = FakeProvider(marker_value="")
+    bootstrap(p)
+
+    script = _pushed_payload(p, "/opt/runtime/bin/bootstrap.sh")
+    assert b"\r" not in script, "CRLF reached the Linux guest"
+    assert script.splitlines()[1] == b"set -euo pipefail"
+    assert b"\r" not in _pushed_payload(p, "/opt/runtime/bin/traefik.yml")
