@@ -5,6 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+# Resolved from this module rather than from cli.py: cli.py is the frozen
+# entry script, whose __file__ points at the bundle root instead of at
+# runtime/, so an entry-script lookup misses the bundled template.
+VERIFY_TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "nginx-hello"
+
 
 class InstallState:
     """Which steps have finished, so a resume or re-run skips them."""

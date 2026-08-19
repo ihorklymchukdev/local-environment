@@ -156,10 +156,9 @@ def setup(resume: bool = typer.Option(False, "--resume"),
           headless: bool = typer.Option(False, "--headless")):
     """Set up everything: check the host, create the VM, install Docker."""
     import sys as _sys
-    from pathlib import Path
     from runtime.core import constants
     from runtime.core.install import (
-        RESUME_NOTICE, DeadEnd, InstallError, InstallState, Progress,
+        RESUME_NOTICE, VERIFY_TEMPLATE, DeadEnd, InstallError, InstallState, Progress,
         RebootRequired, default_steps, run_install,
     )
     from runtime.providers import default_install_dir
@@ -170,7 +169,7 @@ def setup(resume: bool = typer.Option(False, "--resume"),
     steps = default_steps(
         provider,
         cache_dir=root / "cache",
-        template_dir=Path(__file__).resolve().parent / "templates" / "nginx-hello",
+        template_dir=VERIFY_TEMPLATE,
         domain=constants.DEFAULT_DOMAIN,
         exe_path=_sys.executable,
         install_dir=default_install_dir(),
@@ -252,13 +251,14 @@ def selfcheck():
     """
     from pathlib import Path
     from runtime.core.bootstrap import _ASSETS
+    from runtime.core.install import VERIFY_TEMPLATE
     import runtime.providers as _providers
 
     checks = [
         ("runtime/guest/bootstrap.sh", _ASSETS / "bootstrap.sh"),
         ("runtime/guest/traefik.yml", _ASSETS / "traefik.yml"),
         ("runtime/templates/nginx-hello/docker-compose.yml",
-         Path(__file__).resolve().parent / "templates" / "nginx-hello" / "docker-compose.yml"),
+         VERIFY_TEMPLATE / "docker-compose.yml"),
         ("runtime/providers/runtime.yaml", Path(_providers.__file__).parent / "runtime.yaml"),
     ]
 

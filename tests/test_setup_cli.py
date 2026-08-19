@@ -174,3 +174,19 @@ def test_selfcheck_reports_missing_and_exits_nonzero_when_an_asset_cannot_resolv
     assert result.exit_code == 1
     assert "MISSING" in result.stdout
     assert "runtime.yaml" in result.stdout
+
+
+def test_verify_template_resolves_to_the_bundled_compose_file():
+    from runtime.core.install import VERIFY_TEMPLATE
+    assert (VERIFY_TEMPLATE / "docker-compose.yml").is_file()
+
+
+def test_cli_never_resolves_bundled_assets_from_its_own_file():
+    # cli.py is the frozen entry script, and PyInstaller gives it a __file__
+    # under the bundle root rather than under runtime/. Resolving an asset
+    # from it therefore succeeds from source and silently misses in a build --
+    # which is exactly how the nginx-hello template shipped missing once.
+    from pathlib import Path
+    src = Path("runtime/cli.py").read_text()
+    assert "Path(__file__)" not in src, \
+        "resolve bundled assets from an imported module, not from cli.py"
