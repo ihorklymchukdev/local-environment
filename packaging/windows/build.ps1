@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 [CmdletBinding()]
-param([string]$InnoSetup = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")
+param([string]$InnoSetup)
 
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path "$PSScriptRoot\..\..").Path
@@ -12,6 +12,31 @@ $cliExe     = Join-Path $repo 'dist\LocalRuntime\runtime.exe'
 $setupExe   = Join-Path $repo 'dist\LocalRuntime\setup.exe'
 $specFile   = Join-Path $repo 'packaging\windows\runtime.spec'
 $issFile    = Join-Path $repo 'packaging\windows\installer.iss'
+
+function Resolve-Iscc {
+    # Inno's install location moves between versions and install modes: 6.3+
+    # ships a 64-bit build under Program Files, and winget may install per-user.
+    # The registry key it writes is the only stable answer; paths are fallbacks.
+    foreach ($hive in 'HKLM:', 'HKCU:') {
+        foreach ($view in 'SOFTWARE', 'SOFTWARE\WOW6432Node') {
+            $key = "$hive\$view\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1"
+            $loc = (Get-ItemProperty -Path $key -Name InstallLocation -ErrorAction SilentlyContinue).InstallLocation
+            if ($loc) {
+                $candidate = Join-Path $loc 'ISCC.exe'
+                if (Test-Path $candidate) { return $candidate }
+            }
+        }
+    }
+    $paths = @(
+        (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+        (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe')
+    )
+    foreach ($p in $paths) { if ($p -and (Test-Path $p)) { return $p } }
+    $cmd = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    return $null
+}
 
 Push-Location $repo
 try {
@@ -42,9 +67,15 @@ try {
     & $cliExe selfcheck
     if ($LASTEXITCODE -ne 0) { throw "Smoke test failed: runtime.exe selfcheck reported a missing bundled asset." }
 
-    if (-not (Test-Path $InnoSetup)) {
-        throw "Inno Setup not found at $InnoSetup. Install it or pass -InnoSetup."
+    if (-not $InnoSetup) { $InnoSetup = Resolve-Iscc }
+    if (-not $InnoSetup -or -not (Test-Path $InnoSetup)) {
+        throw ("ISCC.exe not found. Install Inno Setup 6 " +
+               "(winget install -e --id JRSoftware.InnoSetup), or pass its path " +
+               "with -InnoSetup. Searched the Inno Setup 6_is1 registry key under " +
+               "HKLM and HKCU, Program Files, Program Files (x86), " +
+               "%LOCALAPPDATA%\Programs, and PATH.")
     }
+    Write-Host "==> ISCC: $InnoSetup"
     $env:RUNTIME_VERSION = $version
     & $InnoSetup $issFile
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed." }
