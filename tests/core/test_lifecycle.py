@@ -31,9 +31,29 @@ def test_compose_up_returns_url_and_status(tmp_path):
     (tmp_path / "docker-compose.yml").write_text("services: {}\n")
     proj = Project(id="myproj", webs=[WebSpec("web", 80)])
     p = FakeProvider()
-    status, urls = compose_up(p, proj, tmp_path, "d.io")
+    status, urls, detail = compose_up(p, proj, tmp_path, "d.io")
     assert status == STARTED_OK
+    assert detail == "", "a healthy stack reports no failure detail"
     assert f"http://myproj.d.io:{constants.EDGE_PORT}" in urls
     # overlay was written into the guest, compose up ran with both -f files
     assert any("overlay.yml" in " ".join(a) for a in p.execs)
     assert any(a[-2:] == ["up", "-d"] for a in p.execs)
+
+
+def test_compose_up_carries_the_guest_error_when_the_stack_fails():
+    # A bare status like "failed_to_start" is unactionable: the reason lives in
+    # compose's own stderr, which used to be discarded.
+    from runtime.core.provider import Completed
+    from runtime.core.project import FAILED_TO_START
+
+    class FailingProvider(FakeProvider):
+        def exec(self, argv, *, root=False):
+            self.execs.append(argv)
+            if argv[-2:] == ["up", "-d"]:
+                return Completed(1, "", "network edge declared as external, but could not be found")
+            return Completed(0, "[]", "")
+
+    proj = Project(id="myproj", webs=[WebSpec("web", 80)])
+    status, _urls, detail = compose_up(FailingProvider(), proj, "/tmp", "d.io")
+    assert status == FAILED_TO_START
+    assert "network edge" in detail

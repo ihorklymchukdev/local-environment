@@ -143,9 +143,11 @@ def verify_step(provider, template_dir: Path, domain: str, *,
     project = load_project(compose, {"id": VERIFY_PROJECT_ID}, template_dir.name)
     try:
         push_project(provider, project.id, template_dir)
-        status, urls = compose_up(provider, project, template_dir, domain)
+        status, urls, detail = compose_up(provider, project, template_dir, domain)
         if status != STARTED_OK:
-            raise VerificationFailed(f"smoke-test project status: {status}")
+            raise VerificationFailed(
+                f"smoke-test project status: {status}"
+                + (f"\n{detail}" if detail else ""))
         try:
             code = http_get(urls[0])
         except Exception as e:

@@ -10,7 +10,7 @@ from . import constants
 # Absolute path: Docker Desktop's WSL integration puts its own docker CLI on
 # PATH, and a bare `docker` would send this VM's projects to Desktop's engine.
 DOCKER = "/usr/bin/docker"
-from .project import Project, classify, overlay_yaml
+from .project import Project, STARTED_OK, classify, overlay_yaml
 
 
 def _guest_dir(project_id: str) -> str:
@@ -54,13 +54,17 @@ def _urls(project: Project, domain: str) -> list[str]:
 
 
 def compose_up(provider, project: Project, local_dir, domain: str):
+    """Returns (status, urls, detail). `detail` carries the guest's own output
+    when the stack did not start, so callers never have to report a bare status
+    code that no one can act on."""
     _write_overlay(provider, project, domain)
     up = provider.exec(_compose_argv(project.id), root=True)
     ps = provider.exec([DOCKER, "compose", "-f",
                         f"{_guest_dir(project.id)}/docker-compose.yml",
                         "ps", "--format", "json"], root=True)
     status = classify(up, ps.stdout)
-    return status, _urls(project, domain)
+    detail = "" if status == STARTED_OK else (up.stderr or up.stdout or ps.stderr).strip()
+    return status, _urls(project, domain), detail
 
 
 def compose_down(provider, project_id: str):

@@ -94,7 +94,7 @@ def up(directory: str = typer.Argument(".", help="Project directory with a docke
 
     p = _provider()
     push_project(p, project.id, local)
-    status, urls = compose_up(p, project, local, constants.DEFAULT_DOMAIN)
+    status, urls, detail = compose_up(p, project, local, constants.DEFAULT_DOMAIN)
 
     state = State(default_install_dir().parent / "state.db")
     state.add_project(project.id, f"{constants.GUEST_PROJECTS}/{project.id}",
@@ -106,6 +106,8 @@ def up(directory: str = typer.Argument(".", help="Project directory with a docke
             typer.echo(f"  {u}")
     else:
         typer.echo(f"Project status: {status}. Run `runtime logs {project.id}`.")
+        if detail:
+            typer.echo(detail)
         raise typer.Exit(code=1)
 
 
