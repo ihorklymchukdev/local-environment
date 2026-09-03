@@ -44,6 +44,9 @@ systemctl enable --now docker
 mkdir -p /opt/runtime/projects
 
 # 5. traefik as a container, single entrypoint on :39080
+# v3.6 or newer is required: earlier releases ask the daemon for Docker API
+# 1.24, which docker-ce 29 refuses, leaving the docker provider empty and
+# every route answering 404.
 mkdir -p /opt/runtime/traefik
 cp "$(dirname "$0")/traefik.yml" /opt/runtime/traefik/traefik.yml 2>/dev/null || true
 /usr/bin/docker rm -f traefik >/dev/null 2>&1 || true
@@ -51,7 +54,7 @@ cp "$(dirname "$0")/traefik.yml" /opt/runtime/traefik/traefik.yml 2>/dev/null ||
   -p 39080:39080 \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
   -v /opt/runtime/traefik/traefik.yml:/etc/traefik/traefik.yml:ro \
-  traefik:v3.1
+  traefik:v3.7
 
 # 6. marker
 echo "$WANT_VERSION" > /opt/runtime/.bootstrapped

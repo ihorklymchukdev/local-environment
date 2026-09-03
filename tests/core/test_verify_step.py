@@ -45,7 +45,7 @@ def test_verify_passes_on_200_and_tears_the_project_down(template):
 def test_verify_fails_on_a_non_200_status(template):
     with pytest.raises(VerificationFailed, match="502"):
         verify_step(FakeProvider(), template, "127-0-0-1.sslip.io",
-                    http_get=lambda url: 502)
+                    http_get=lambda url: 502, ready_timeout=0)
 
 
 def test_verify_fails_without_requesting_when_the_stack_is_crash_looping(template):
@@ -75,5 +75,26 @@ def test_verify_tears_down_even_when_the_request_fails(template):
         raise OSError("connection refused")
 
     with pytest.raises(VerificationFailed):
-        verify_step(provider, template, "127-0-0-1.sslip.io", http_get=http_get)
+        verify_step(provider, template, "127-0-0-1.sslip.io", http_get=http_get,
+                    ready_timeout=0)
     assert any("down" in argv for argv in provider.execs)
+
+
+def test_verify_waits_out_the_404_before_traefik_publishes_the_router(template):
+    # Traefik registers a new router a beat after the container starts. A
+    # single-shot request fails a healthy stack with
+    # "...did not respond: HTTP Error 404: Not Found".
+    from urllib.error import HTTPError
+
+    codes = iter([404, 404, 200])
+
+    def http_get(url):
+        code = next(codes)
+        if code != 200:
+            raise HTTPError(url, code, "Not Found", {}, None)
+        return code
+
+    slept = []
+    verify_step(FakeProvider(), template, "127-0-0-1.sslip.io",
+                http_get=http_get, sleep=slept.append)
+    assert slept, "the smoke test must retry rather than fail on the first 404"

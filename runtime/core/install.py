@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -130,8 +131,34 @@ def _default_http_get(url: str) -> int:
         return response.status
 
 
+# Traefik publishes a router a beat after the container starts, so the first
+# request after `compose up` answers 404 on a stack that is perfectly healthy.
+READY_TIMEOUT = 30.0
+
+
+def _await_http_ok(url: str, http_get, timeout: float, sleep) -> None:
+    deadline = time.monotonic() + timeout
+    while True:
+        error = None
+        code = None
+        try:
+            code = http_get(url)
+        except Exception as e:
+            error = e
+        if code == 200:
+            return
+        if time.monotonic() >= deadline:
+            if error is not None:
+                raise VerificationFailed(
+                    f"{url} did not respond: {error}") from error
+            raise VerificationFailed(
+                f"{url} returned HTTP {code}, expected 200")
+        sleep(0.5)
+
+
 def verify_step(provider, template_dir: Path, domain: str, *,
-                http_get=_default_http_get) -> None:
+                http_get=_default_http_get, ready_timeout: float = READY_TIMEOUT,
+                sleep=time.sleep) -> None:
     """Run the bundled template end to end and require HTTP 200."""
     import yaml
 
@@ -148,12 +175,7 @@ def verify_step(provider, template_dir: Path, domain: str, *,
             raise VerificationFailed(
                 f"smoke-test project status: {status}"
                 + (f"\n{detail}" if detail else ""))
-        try:
-            code = http_get(urls[0])
-        except Exception as e:
-            raise VerificationFailed(f"{urls[0]} did not respond: {e}") from e
-        if code != 200:
-            raise VerificationFailed(f"{urls[0]} returned HTTP {code}, expected 200")
+        _await_http_ok(urls[0], http_get, ready_timeout, sleep)
     finally:
         compose_down(provider, project.id)
 
