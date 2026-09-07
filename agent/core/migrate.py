@@ -27,20 +27,22 @@ def _add_column(conn: sqlite3.Connection, table: str, column: str, decl: str) ->
 
 
 def _v1_projects_and_forwards(conn: sqlite3.Connection) -> None:
-    conn.executescript("""
+    # One statement per execute(), not executescript(): that commits any open
+    # transaction first, which would break the one migrate() holds.
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS projects (
             id TEXT PRIMARY KEY,
             guest_path TEXT NOT NULL,
             domain TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'stopped'
-        );
+        )""")
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS forwards (
             project_id TEXT NOT NULL,
             service TEXT NOT NULL,
             guest_port INTEGER NOT NULL,
             host_port INTEGER NOT NULL UNIQUE
-        );
-    """)
+        )""")
 
 
 def _v2_project_problem(conn: sqlite3.Connection) -> None:
@@ -58,8 +60,12 @@ SCHEMA_VERSION = len(MIGRATIONS)
 
 
 def _read_version(conn: sqlite3.Connection) -> int:
-    conn.execute("CREATE TABLE IF NOT EXISTS schema_version "
-                 "(version INTEGER NOT NULL)")
+    """Reads without writing: nothing may touch a database until the too-new
+    check has passed on it."""
+    known = conn.execute("SELECT name FROM sqlite_master WHERE type='table' "
+                         "AND name='schema_version'").fetchone()
+    if not known:
+        return 0
     row = conn.execute("SELECT version FROM schema_version").fetchone()
     return int(row[0]) if row else 0
 
@@ -67,7 +73,6 @@ def _read_version(conn: sqlite3.Connection) -> int:
 def _write_version(conn: sqlite3.Connection, version: int) -> None:
     conn.execute("DELETE FROM schema_version")
     conn.execute("INSERT INTO schema_version(version) VALUES (?)", (version,))
-    conn.commit()
 
 
 def migrate(conn: sqlite3.Connection) -> int:
@@ -80,9 +85,21 @@ def migrate(conn: sqlite3.Connection) -> int:
             f"agent only knows version {SCHEMA_VERSION}. It was written by a "
             f"newer agent; run the newer one, or delete the database — the "
             f"project list is rebuilt from the projects directory.")
+    if version == SCHEMA_VERSION:
+        return version
+    conn.execute("CREATE TABLE IF NOT EXISTS schema_version "
+                 "(version INTEGER NOT NULL)")
+    conn.commit()
     for index in range(version, SCHEMA_VERSION):
-        MIGRATIONS[index](conn)
-        # Recorded per step, not once at the end: an agent killed mid-list
-        # comes back knowing exactly which steps already ran.
-        _write_version(conn, index + 1)
+        # A step and the version marker recording it are one transaction. Every
+        # step today is idempotent, but the first backfill anyone adds must not
+        # be able to run twice after a crash between the two.
+        conn.execute("BEGIN")
+        try:
+            MIGRATIONS[index](conn)
+            _write_version(conn, index + 1)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
     return SCHEMA_VERSION

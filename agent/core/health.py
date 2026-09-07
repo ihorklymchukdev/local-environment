@@ -22,6 +22,9 @@ from .project import Project
 # host's own post-install check waits.
 READY_TIMEOUT = 30.0
 POLL_INTERVAL = 0.5
+# One probe's own ceiling. Short: a single re-probe sits inside a request the
+# CLI is waiting on.
+PROBE_TIMEOUT = 5.0
 
 BOUND_TO_LOOPBACK = "bound_to_loopback"
 SERVICE_UNREACHABLE = "service_unreachable"
@@ -58,7 +61,8 @@ def default_probe(url: str, host: str) -> int:
     from urllib.request import Request, urlopen
 
     try:
-        with urlopen(Request(url, headers={"Host": host}), timeout=10) as response:
+        with urlopen(Request(url, headers={"Host": host}),
+                     timeout=PROBE_TIMEOUT) as response:
             return response.status
     except HTTPError as e:
         # Traefik's own 404 or 502 is the answer this probe came for, not an
@@ -126,18 +130,21 @@ def _listeners(runner, project_id: str, service: str) -> list[Listener] | None:
     return parse_listeners(result.stdout)
 
 
+# Both messages are written in the past tense: they are stored, and they
+# describe the last time the project started, not this moment.
 def _loopback_message(web: WebSpec) -> str:
-    return (f"The '{web.service}' service is listening on 127.0.0.1 inside its "
-            f"container, so nothing outside that container can reach it. "
-            f"Change it to listen on 0.0.0.0 (all addresses) on port "
-            f"{web.port}, then start the project again.")
+    return (f"When this project last started, the '{web.service}' service was "
+            f"listening on 127.0.0.1 inside its container, so nothing outside "
+            f"that container could reach it. Change it to listen on 0.0.0.0 "
+            f"(all addresses) on port {web.port}, then start the project again.")
 
 
 def _unreachable_message(web: WebSpec) -> str:
-    return (f"Nothing answered on port {web.port} of the '{web.service}' "
-            f"service, so the address returns a proxy error. The usual cause "
-            f"is a service listening on 127.0.0.1 instead of 0.0.0.0 inside "
-            f"its container; `omelet logs` shows what it printed.")
+    return (f"When this project last started, nothing answered on port "
+            f"{web.port} of the '{web.service}' service, so the address "
+            f"returned a proxy error. The usual cause is a service listening "
+            f"on 127.0.0.1 instead of 0.0.0.0 inside its container; "
+            f"`omelet logs` shows what it printed.")
 
 
 def _explain(runner, project_id: str, web: WebSpec) -> Diagnosis:
@@ -172,3 +179,23 @@ def diagnose(runner, project: Project, domain: str, *,
     if status != _BAD_GATEWAY:
         return None
     return _explain(runner, project.id, web)
+
+
+def answers(project: Project, domain: str, *,
+            edge_port: int = constants.EDGE_PORT,
+            traefik_host: str = "traefik", http_probe=default_probe) -> bool:
+    """Does the routed service answer right now? One request, no retry window:
+    this runs inside a read the caller is waiting on.
+
+    False on anything short of a real answer, so a stored diagnosis is only
+    ever cleared on positive evidence.
+    """
+    if not project.webs:
+        return False
+    web = project.webs[0]
+    try:
+        status = http_probe(f"http://{traefik_host}:{edge_port}/",
+                            host_for(project.id, web, domain))
+    except Exception:
+        return False
+    return status is not None and status not in _RETRYABLE

@@ -421,3 +421,42 @@ def test_a_broken_compose_file_outranks_a_routing_problem(env):
 
     assert env.raw_client.get("/projects/blog").json()["problem"]["code"] == \
         "invalid_compose"
+
+
+def test_a_stored_problem_clears_when_the_project_answers_on_a_re_read(env):
+    # An entrypoint slower than the readiness window stores a diagnosis that is
+    # true for a minute and false for as long as the project lives afterwards.
+    _create(env)
+    _write_compose(env, "blog")
+    env.probe.status = 502
+    _run_to_completion(env, env.client.post("/projects/blog/up"))
+    assert env.state.get_project("blog")["problem_code"] == "bound_to_loopback"
+
+    env.probe.status = 200
+    assert env.client.get("/projects/blog").json()["problem"] is None
+    assert env.state.get_project("blog")["problem_code"] is None, \
+        "the stale row must be cleared, not just hidden from one response"
+
+
+def test_a_stored_problem_survives_a_re_read_that_still_fails(env):
+    _create(env)
+    _write_compose(env, "blog")
+    env.probe.status = 502
+    _run_to_completion(env, env.client.post("/projects/blog/up"))
+
+    body = env.client.get("/projects/blog").json()
+    assert body["problem"]["code"] == "bound_to_loopback"
+
+
+def test_the_project_listing_never_probes(env):
+    # One round trip per project would make `omelet status` slow in proportion
+    # to how much the tool is used.
+    _create(env)
+    _write_compose(env, "blog")
+    env.probe.status = 502
+    _run_to_completion(env, env.client.post("/projects/blog/up"))
+    env.probe.calls.clear()
+
+    listed = env.client.get("/projects").json()["projects"]
+    assert listed[0]["problem"]["code"] == "bound_to_loopback"
+    assert env.probe.calls == []

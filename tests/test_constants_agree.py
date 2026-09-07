@@ -41,3 +41,14 @@ def test_agent_image_matches_the_stack_files_default():
     match = re.search(r"\$\{OMELET_AGENT_IMAGE:-([^}]+)\}", stack.read_text())
     assert match, "stack.yml must default OMELET_AGENT_IMAGE"
     assert match[1] == host_constants.AGENT_IMAGE
+
+
+def test_the_readiness_window_is_the_same_on_both_sides_of_the_seam():
+    # Declared twice for the same reason as the constants above: the agent may
+    # not import from host/. Both wait out the same behaviour -- Traefik
+    # publishing a router a beat after the container starts -- so an agent with
+    # the shorter window would diagnose a fault the host's own check waits out.
+    from agent.core.health import READY_TIMEOUT as agent_timeout
+    from host.core.install import READY_TIMEOUT as host_timeout
+
+    assert host_timeout == agent_timeout

@@ -20,6 +20,10 @@ LOOPBACK6_80 = HEADER + (
     "   0: 00000000000000000000000001000000:0050 "
     "00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 "
     "00000000  1000        0 12345 1 0000000000000000 100 0 0 10 0\n")
+WILDCARD6_80 = HEADER + (
+    "   0: 00000000000000000000000000000000:0050 "
+    "00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 "
+    "00000000  1000        0 12345 1 0000000000000000 100 0 0 10 0\n")
 # A connection to somewhere else (st 01, ESTABLISHED) must never read as a
 # listening socket.
 ESTABLISHED_ONLY = HEADER + (
@@ -205,6 +209,7 @@ def test_a_project_with_no_web_service_is_never_probed():
     ("0100007F:0050", ("127.0.0.1", 80)),
     ("00000000:1F90", ("0.0.0.0", 8080)),
     ("00000000000000000000000001000000:0050", ("::1", 80)),
+    ("00000000000000000000000000000000:1F90", ("::", 8080)),
     ("0000000000000000FFFF00000100007F:0050", ("::ffff:7f00:1", 80)),
 ])
 def test_proc_net_addresses_decode_byte_order_correctly(field, expected):
@@ -212,3 +217,35 @@ def test_proc_net_addresses_decode_byte_order_correctly(field, expected):
     # 1.0.0.127 and no bind-address fault is ever confirmed.
     address, port = health._decode_address(field)
     assert (str(address), port) == expected
+
+
+def test_an_ipv6_service_on_all_interfaces_is_not_read_as_loopback():
+    # The false positive that would matter: `::` differs from `::1` by one
+    # byte in the word this parser reverses.
+    clock, probe = Clock(), Probe(502)
+    listeners = health.parse_listeners(WILDCARD6_80)
+
+    assert [listener.is_loopback for listener in listeners] == [False]
+    assert diagnose(FakeRunner(proc_net=WILDCARD6_80), probe, clock).code == \
+        health.SERVICE_UNREACHABLE
+
+
+def test_answers_asks_once_and_never_waits_out_a_window():
+    # This one runs inside a read the CLI is blocked on; a retry window here
+    # would make every `omelet status` on a broken project take 30 seconds.
+    probe = Probe(502)
+    assert health.answers(PROJECT, "test.local", edge_port=41080,
+                          http_probe=probe) is False
+    assert len(probe.calls) == 1
+
+    answering = Probe(200)
+    assert health.answers(PROJECT, "test.local", edge_port=41080,
+                          http_probe=answering) is True
+
+
+def test_answers_is_false_when_nothing_answers_at_all():
+    # No answer is not evidence the fault is gone, and this result is what
+    # clears a stored diagnosis.
+    assert health.answers(PROJECT, "test.local",
+                          http_probe=Probe(ConnectionRefusedError("x"))) is False
+    assert health.answers(PROJECT, "test.local", http_probe=Probe(404)) is False

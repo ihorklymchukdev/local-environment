@@ -21,7 +21,7 @@ from ..core.config import AgentConfig
 from ..core.detect import AmbiguousError
 from ..core.exec import LocalRunner
 # Imported by name: the /health route below shadows a module named `health`.
-from ..core.health import default_probe, diagnose
+from ..core.health import answers, default_probe, diagnose
 from ..core.overlay import host_for
 from ..core.project import STARTED_OK, Project, _slug, load_project
 from ..core.state import State
@@ -227,13 +227,15 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
         return [f"http://{host_for(project.id, web, domain)}:{config.edge_port}"
                 for web in project.webs]
 
-    def payload(row: dict) -> dict:
+    def payload(row: dict, *, recheck: bool = False) -> dict:
         # A project with broken or missing files still has a status, and one
         # broken project must never take the whole listing down with it.
         problem = None
         urls: list[str] = []
+        project = None
         try:
-            urls = urls_for(load(row["id"]), row["domain"])
+            project = load(row["id"])
+            urls = urls_for(project, row["domain"])
         except ApiError as e:
             problem = {"code": e.code, "message": e.message}
         if problem is None and row.get("problem_code"):
@@ -241,6 +243,13 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
             # the project has no URLs to be unreachable on.
             problem = {"code": row["problem_code"],
                        "message": row["problem_message"]}
+            if recheck and project is not None and answers(
+                    project, row["domain"], edge_port=config.edge_port,
+                    traefik_host=config.traefik_host, http_probe=http_probe):
+                # An entrypoint slower than the readiness window stores a
+                # diagnosis that is true for a minute and false forever after.
+                state.set_problem(row["id"])
+                problem = None
         return {"id": row["id"], "status": row["status"], "domain": row["domain"],
                 "path": row["guest_path"], "urls": urls, "problem": problem}
 
@@ -300,7 +309,9 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
 
     @app.get("/projects/{project_id}")
     def get_project(project_id: str) -> dict:
-        return payload(require_row(project_id))
+        # One re-probe, only here: the listing would pay a round trip per
+        # project, which is what makes `omelet status` slow as the tool is used.
+        return payload(require_row(project_id), recheck=True)
 
     def resolve_path(project_id: str, rel_path: str) -> Path:
         try:
