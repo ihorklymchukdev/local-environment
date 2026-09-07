@@ -40,6 +40,15 @@ host CLI (typer)  →  AgentClient (urllib)  →  127.0.0.1:39099 → agent (Fas
 host localhost:39080 ─────────────────────────→  traefik :39080 → routes by Host header
 ```
 
+### Hard invariant: `host/` never imports `agent/`
+
+The host ships as a PyInstaller-frozen binary and reaches the agent over HTTP; the agent ships as a
+Docker image built from `agent/` alone. `tests/host/test_no_agent_import.py` and
+`tests/agent/test_no_host_import.py` enforce both directions by AST, anchored to `__file__`. The
+host's only runtime dependency is `typer` — it parses no YAML, and
+`tests/host/test_host_dependencies.py` fails on a declared or imported one. Names both packages
+need are declared twice and held equal by `tests/test_constants_agree.py`.
+
 ### Hard invariant: no platform branching outside `host/providers/`
 
 `tests/test_no_platform_leak.py` greps every `host/**/*.py` and `agent/**/*.py` outside
@@ -123,6 +132,17 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   `project.load_project` / `overlay.host_for`.
 - **`classify()` tolerates both JSON-array and NDJSON `docker compose ps --format json` output** —
   the format differs across compose versions.
+- **`ProjectLocks` covers every write to a project**, lifecycle *and* files: an upload landing
+  between the overlay being written and compose reading `docker-compose.yml` starts a project from
+  two versions of itself. A held project answers 409 `project_busy`; the host client retries that
+  itself (`_while_busy`), rewinding the archive per attempt. Reads are never locked.
+- **`install.verify_step` is the installer's smoke test and a real HTTP 200**, not "the job
+  succeeded": it drives `agent/templates/nginx-hello` through `AgentClient` under the reserved id
+  `omelet-selftest` (never derived from the template's folder name, or a re-run could tear down a
+  user project), polls the URL for `READY_TIMEOUT` seconds because Traefik publishes a router a beat
+  after the container starts, and deletes the project in a `finally`. `agent_version_step` runs
+  just before it, so an agent older than `constants.EXPECTED_AGENT_VERSION` (the tag in
+  `AGENT_IMAGE`) is one sentence rather than a 404 minutes later.
 - CLI command bodies use **function-local imports** deliberately (keeps `omelet --help` and the
   smoke test fast, and avoids importing provider code on unsupported hosts). `cli._provider_factory`
   is a module attribute so tests can monkeypatch the provider.
@@ -140,7 +160,8 @@ Do not add an `if windows` anywhere else — push the difference into a provider
 ## Conventions
 
 - Python 3.12+, `from __future__ import annotations`, frozen dataclasses for value types.
-- Runtime deps are only `typer` and `pyyaml` — keep it that way unless there's a reason.
+- Host runtime deps are `typer` alone; the agent's are declared in `agent/pyproject.toml`. Keep
+  it that way unless there's a reason.
 - Live WSL2 run needs an Ubuntu 24.04 rootfs tarball path in `OMELET_ROOTFS` (README has the
   current download URL); the provider factory reads it, and `omelet vm create` without it raises
   `ValueError`. The value must be a Windows path — it goes straight to `wsl.exe --import`.
