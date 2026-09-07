@@ -4,4 +4,5 @@
 *.sh text eol=lf
 host/provision/** text eol=lf
 agent/templates/** text eol=lf
+agent/deploy/** text eol=lf
 host/providers/omelet.yaml text eol=lf

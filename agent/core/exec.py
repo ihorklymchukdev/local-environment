@@ -25,8 +25,10 @@ class LocalRunner:
     """
 
     def exec(self, argv: list[str], *, root: bool = False) -> Completed:
-        # `root` is accepted and ignored: the agent is already the privileged
-        # party inside the VM.
+        # `root` is accepted and ignored: it exists only for signature
+        # compatibility with the host's `VmProvider.exec`. The agent runs as
+        # a non-root user (Task 5) -- its ability to reach the daemon comes
+        # from the mounted socket and docker-group membership, not from uid 0.
         try:
             proc = subprocess.run(argv, capture_output=True, text=True)
         except OSError as e:

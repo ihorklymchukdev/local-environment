@@ -10,6 +10,13 @@
 # `network: edge` below are load-bearing -- drop the first and every
 # container in the VM gets a route, drop the second and Traefik picks the
 # wrong network on a multi-network container.
+#
+# The edge network name is the literal `edge`, not a variable: it is
+# `constants.EDGE_NETWORK`, an authoritative constant the global rulings
+# forbid giving a second name. `agent/core/overlay.py` hardcodes the same
+# constant when it labels project containers, so parameterising only the
+# Traefik side here would let the two drift -- Traefik watching a network
+# nothing is attached to, every route answering 404 with no error anywhere.
 services:
   traefik:
     image: traefik:v3.7
@@ -19,8 +26,9 @@ services:
     restart: always
     command:
       - "--entryPoints.web.address=:${OMELET_EDGE_PORT:-39080}"
+      - "--providers.docker=true"
       - "--providers.docker.exposedByDefault=false"
-      - "--providers.docker.network=${OMELET_EDGE_NETWORK:-edge}"
+      - "--providers.docker.network=edge"
     ports:
       - "${OMELET_EDGE_PORT:-39080}:${OMELET_EDGE_PORT:-39080}"
     volumes:
