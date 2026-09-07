@@ -154,10 +154,12 @@ def test_resolve_within_allows_a_nested_relative_path(tmp_path):
 
 @pytest.fixture
 def env(tmp_path):
+    token_path = tmp_path / "agent.token"
+    token_path.write_text("test-token")
     config = AgentConfig(projects_root=tmp_path / "projects",
-                         state_db=tmp_path / "state.db")
+                         state_db=tmp_path / "state.db", token_path=token_path)
     app = create_app(config=config)
-    with TestClient(app) as client:
+    with TestClient(app, headers={"Authorization": "Bearer test-token"}) as client:
         yield client, config
 
 
@@ -206,7 +208,8 @@ def test_a_client_disconnect_mid_upload_does_not_leak_a_temp_file(env):
         yield b"x" * 1024
         raise RuntimeError("client vanished")
 
-    raw = TestClient(client.app, raise_server_exceptions=False)
+    raw = TestClient(client.app, raise_server_exceptions=False,
+                     headers={"Authorization": "Bearer test-token"})
     resp = raw.post("/projects/blog/files", content=dropped_connection())
     assert resp.status_code == 500
     assert _stray_temp_files(config) == []
@@ -296,3 +299,40 @@ def test_a_5mb_archive_round_trips_proving_the_command_line_ceiling_is_gone(env)
     got = client.get("/projects/blog/files/big.bin")
     assert got.status_code == 200
     assert got.content == payload
+
+
+# ---------------------------------------------------------------------------
+# Upload size cap
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def capped_env(tmp_path):
+    """A small cap so the tests below don't need a multi-hundred-MB body to
+    exercise it."""
+    token_path = tmp_path / "agent.token"
+    token_path.write_text("test-token")
+    config = AgentConfig(projects_root=tmp_path / "projects",
+                         state_db=tmp_path / "state.db", token_path=token_path,
+                         max_upload_bytes=1024)
+    app = create_app(config=config)
+    with TestClient(app, headers={"Authorization": "Bearer test-token"}) as client:
+        yield client, config
+
+
+def test_archive_upload_over_the_cap_is_413_and_leaves_no_temp_file(capped_env):
+    client, config = capped_env
+    _create(client)
+    resp = client.post("/projects/blog/files", content=b"x" * 2000)
+    assert resp.status_code == 413
+    assert resp.json()["error"]["code"] == "payload_too_large"
+    assert _stray_temp_files(config) == []
+
+
+def test_single_file_put_over_the_cap_is_413_and_leaves_no_temp_file(capped_env):
+    client, config = capped_env
+    _create(client)
+    resp = client.put("/projects/blog/files/big.bin", content=b"x" * 2000)
+    assert resp.status_code == 413
+    assert resp.json()["error"]["code"] == "payload_too_large"
+    assert _stray_temp_files(config) == []
+    assert not (config.projects_root / "blog" / "big.bin").exists()

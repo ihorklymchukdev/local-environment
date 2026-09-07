@@ -18,7 +18,7 @@ VERIFY_PROJECT_ID = "omelet-selftest"
 # Bootstrap is purely host-side provisioning; the agent never reads any of these.
 # Bump the version whenever host/provision/bootstrap.sh changes, or every
 # existing VM silently skips the new provisioning.
-BOOTSTRAP_VERSION = 4
+BOOTSTRAP_VERSION = 5
 BOOTSTRAP_MARKER = f"{GUEST_ROOT}/.bootstrapped"
 
 # Where the pushed copy of agent/deploy/stack.yml lands, and the file compose
@@ -26,6 +26,11 @@ BOOTSTRAP_MARKER = f"{GUEST_ROOT}/.bootstrapped"
 # compose file, which is why both live directly under GUEST_ROOT.
 GUEST_STACK = f"{GUEST_ROOT}/stack.yml"
 GUEST_ENV = f"{GUEST_ROOT}/.env"
+
+# Generated in the guest by bootstrap.sh, never pushed from the host. The host
+# reads it fresh per client via provider.exec(root=True) rather than caching a
+# copy -- see host/client.py.
+GUEST_TOKEN = f"{GUEST_ROOT}/agent.token"
 
 # Must match stack.yml's OMELET_AGENT_IMAGE default; a test holds the two equal.
 AGENT_IMAGE = "ghcr.io/ihorklymchukdev/omelet-agent:0.1.0"

@@ -116,6 +116,45 @@ def test_bootstrap_writes_the_marker_last():
     assert marker >= len(commands) - 2, "nothing that can fail may run after the marker"
 
 
+def test_bootstrap_generates_the_token_only_if_absent():
+    # Bootstrap re-runs are normal (idempotency by design); regenerating the
+    # token on every run would invalidate a credential the host is already
+    # holding.
+    assert "[[ ! -s " + constants.GUEST_TOKEN + " ]]" in BOOTSTRAP.read_text()
+
+
+def test_bootstrap_generates_the_token_without_a_sigpipe_trap():
+    # tr fed straight from /dev/urandom never terminates on its own; bounding
+    # its output with a downstream `head -c` kills it with SIGPIPE the moment
+    # head stops reading, and `set -o pipefail` then fails the whole script
+    # for a byte count that was never wrong. Bounding /dev/urandom itself at
+    # the head of the pipeline avoids the trap entirely.
+    text = BOOTSTRAP.read_text()
+    assert "head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \\n'" in text
+    assert "tr -dc" not in text
+
+
+def test_bootstrap_writes_the_token_before_the_stack_comes_up():
+    commands = _commands()
+    token_write = _index_of(constants.GUEST_TOKEN)
+    assert token_write < _index_of(" up -d")
+
+
+def test_bootstrap_writes_the_token_after_the_permissions_sweep_widens_it():
+    # A mode-600 token written before `chmod -R g+rwX /opt/omelet` comes out
+    # group-readable; written after, its own chmod is the last word.
+    commands = _commands()
+    token_write = _index_of(f"[[ ! -s {constants.GUEST_TOKEN} ]]")
+    assert _index_of("g+rwX") < token_write
+
+
+def test_bootstrap_reasserts_a_narrow_mode_on_the_token_after_writing_it():
+    commands = _commands()
+    chmod = _index_of(f"chmod 640 {constants.GUEST_TOKEN}")
+    assert chmod > _index_of(f"[[ ! -s {constants.GUEST_TOKEN} ]]")
+    assert chmod < _index_of(" up -d")
+
+
 def test_bootstrap_writes_this_vms_real_docker_gid_for_the_stack():
     # stack.yml's group_add defaults to 999 and the image bakes in 999, but the
     # chgrp above uses whatever GID this VM's docker group actually has. On a VM

@@ -66,7 +66,26 @@ if ! DOCKER_GID="$(getent group docker | cut -d: -f3)" || [[ -z "$DOCKER_GID" ]]
 fi
 printf 'OMELET_DOCKER_GID=%s\n' "$DOCKER_GID" > /opt/omelet/.env
 
-# 6. traefik + the agent, as one compose stack.
+# 6. the shared secret between the host and the agent.
+# Only if absent: bootstrap re-runs are normal, and regenerating it every
+# time would invalidate a token the host is already holding. Must land
+# before the agent starts, and after the chmod sweep above or its mode gets
+# widened along with everything else.
+# The pipeline reads exactly 32 bytes from /dev/urandom before anything
+# downstream sees them: bounding an infinite `tr < /dev/urandom` with a
+# later `head -c` instead kills tr with SIGPIPE the moment head stops
+# reading, and set -o pipefail then fails the whole script over a byte count
+# that was never wrong.
+if [[ ! -s /opt/omelet/agent.token ]]; then
+  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > /opt/omelet/agent.token
+fi
+# Root-owned but group-readable: the agent's own uid is non-root, and docker
+# group membership is already root-equivalent here (it owns the socket), so
+# it is the group a credential the agent itself must read has to grant.
+chgrp docker /opt/omelet/agent.token
+chmod 640 /opt/omelet/agent.token
+
+# 7. traefik + the agent, as one compose stack.
 # Always pull: this is how an agent update reaches an already-provisioned VM,
 # so both the first install and every update need the network.
 test -f /opt/omelet/stack.yml || { echo 'stack.yml was never pushed to the VM' >&2; exit 1; }
@@ -77,6 +96,6 @@ if ! /usr/bin/docker compose -f /opt/omelet/stack.yml pull; then
 fi
 /usr/bin/docker compose -f /opt/omelet/stack.yml up -d
 
-# 7. marker, last: a failure above must leave no marker behind.
+# 8. marker, last: a failure above must leave no marker behind.
 echo "$WANT_VERSION" > /opt/omelet/.bootstrapped
 echo "bootstrap complete at version $WANT_VERSION"

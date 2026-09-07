@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import tempfile
 import threading
 from contextlib import contextmanager
@@ -119,6 +120,15 @@ def _validation_message(exc: RequestValidationError) -> str:
     return f"{where}: {first.get('msg', 'invalid request body')}".lstrip(": ")
 
 
+def _read_token(path: Path) -> str:
+    """Empty string for "missing" and "unreadable" alike -- callers only need
+    to know whether they have a credential to compare against."""
+    try:
+        return path.read_text().strip()
+    except OSError:
+        return ""
+
+
 def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
                jobs: JobRegistry | None = None) -> FastAPI:
     config = config or AgentConfig.from_env()
@@ -154,6 +164,26 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
         log.exception("unhandled error serving a request")
         return _body("internal_error",
                      f"the agent failed with an unexpected {type(exc).__name__}", 500)
+
+    # Read once at startup, not per request. The agent binds 0.0.0.0 inside
+    # the VM (WSL2's localhostForwarding needs that), so every container in
+    # the VM can otherwise reach an agent holding the Docker socket. A missing
+    # or empty token file must close every authenticated route, never open
+    # one -- Phase 3 replaces this shared, VM-wide token with a service-issued
+    # device token per host.
+    token = _read_token(config.token_path)
+
+    @app.middleware("http")
+    async def _require_bearer_token(request: Request, call_next):
+        if request.url.path == "/health":
+            return await call_next(request)
+        if not token:
+            return _body("agent_unconfigured",
+                         "the agent has no token configured; run setup again", 503)
+        scheme, _, supplied = request.headers.get("authorization", "").partition(" ")
+        if scheme.lower() != "bearer" or not secrets.compare_digest(supplied, token):
+            return _body("unauthorized", "missing or invalid bearer token", 401)
+        return await call_next(request)
 
     def project_dir(project_id: str) -> Path:
         return Path(config.projects_root) / project_id
@@ -288,14 +318,22 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
         dir_.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(dir=dir_, suffix=".upload")
         path = Path(name)
+        written = 0
         try:
             with os.fdopen(fd, "wb") as f:
                 async for chunk in request.stream():
+                    written += len(chunk)
+                    # Checked before writing: the moment the limit is passed,
+                    # not after the whole body has already landed on disk.
+                    if written > config.max_upload_bytes:
+                        raise ApiError(
+                            "payload_too_large",
+                            f"upload exceeds the {config.max_upload_bytes} "
+                            "byte limit", 413)
                     f.write(chunk)
         except BaseException:
-            # A client that disconnects mid-upload must not leave a temp
-            # file behind: there is no size cap on this route by design, so
-            # an unremoved partial upload is an unbounded disk leak.
+            # A client that disconnects mid-upload, or trips the size cap
+            # above, must not leave a temp file behind.
             path.unlink(missing_ok=True)
             raise
         return path

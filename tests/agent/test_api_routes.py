@@ -74,23 +74,30 @@ class FakeRunner:
         return [a for a in self.calls if needle in " ".join(a)]
 
 
+AUTH = {"Authorization": "Bearer test-token"}
+
+
 @pytest.fixture
 def env(tmp_path):
+    token_path = tmp_path / "agent.token"
+    token_path.write_text("test-token")
     config = AgentConfig(
         domain="test.local",
         edge_port=41080,
         projects_root=tmp_path / "projects",
         state_db=tmp_path / "state.db",
         version="9.9.9",
+        token_path=token_path,
     )
     runner = FakeRunner()
     app = create_app(config=config, runner=runner)
-    with TestClient(app) as client:
+    with TestClient(app, headers=AUTH) as client:
         # raw_client returns the 500 a real caller would see instead of
         # re-raising the exception inside the test.
         yield SimpleNamespace(client=client, config=config, runner=runner,
                               state=app.state.state, jobs=app.state.jobs,
-                              raw_client=TestClient(app, raise_server_exceptions=False))
+                              raw_client=TestClient(app, raise_server_exceptions=False,
+                                                    headers=AUTH))
 
 
 def _create(env, pid="blog", **body):
