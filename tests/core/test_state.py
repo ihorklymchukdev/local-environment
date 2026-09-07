@@ -1,11 +1,11 @@
-from runtime.core.state import State
+from omelet.core.state import State
 
 
 def test_add_and_get_project(tmp_path):
     s = State(tmp_path / "s.db")
-    s.add_project("myproj", "/opt/runtime/projects/myproj", "myproj.d.io")
+    s.add_project("myproj", "/opt/omelet/projects/myproj", "myproj.d.io")
     row = s.get_project("myproj")
-    assert row["guest_path"] == "/opt/runtime/projects/myproj"
+    assert row["guest_path"] == "/opt/omelet/projects/myproj"
     assert row["status"] == "stopped"
 
 

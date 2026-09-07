@@ -15,7 +15,7 @@ def _default_runner(argv):
 
 
 class LimaProvider:
-    def __init__(self, name="runtime-vm", config: Path | None = None,
+    def __init__(self, name="omelet-vm", config: Path | None = None,
                  limactl="limactl", runner=_default_runner):
         self.name = name
         self.config = Path(config) if config else None
@@ -58,7 +58,7 @@ class LimaProvider:
         return self._cmd(["shell", self.name, *prefix])
 
     def forward(self, guest_port: int, host_port: int) -> None:
-        # Declared in runtime.yaml portForwards; nothing to do at runtime for
+        # Declared in omelet.yaml portForwards; nothing to do at runtime for
         # the edge port. Dynamic forwards are a later milestone.
         if guest_port != host_port:
             raise NotImplementedError(

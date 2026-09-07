@@ -5,7 +5,7 @@ from pathlib import Path
 
 from . import constants
 
-_GUEST_DIR = "/opt/runtime/bin"
+_GUEST_DIR = "/opt/omelet/bin"
 _GUEST_SCRIPT = f"{_GUEST_DIR}/bootstrap.sh"
 _GUEST_TRAEFIK = f"{_GUEST_DIR}/traefik.yml"
 _ASSETS = Path(__file__).resolve().parent.parent / "guest"

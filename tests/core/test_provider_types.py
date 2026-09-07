@@ -1,4 +1,4 @@
-from runtime.core.provider import Completed, CheckResult, Diagnosis
+from omelet.core.provider import Completed, CheckResult, Diagnosis
 
 
 def test_completed_ok_reflects_returncode():

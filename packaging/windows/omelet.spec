@@ -2,16 +2,16 @@
 # the mode antivirus heuristics dislike most; the installer wraps this anyway.
 
 a = Analysis(
-    ["../../runtime/cli.py"],
+    ["../../omelet/cli.py"],
     pathex=["../.."],
     datas=[
-        ("../../runtime/guest/bootstrap.sh", "runtime/guest"),
-        ("../../runtime/guest/traefik.yml", "runtime/guest"),
-        ("../../runtime/templates/nginx-hello/docker-compose.yml",
-         "runtime/templates/nginx-hello"),
-        ("../../runtime/providers/runtime.yaml", "runtime/providers"),
+        ("../../omelet/guest/bootstrap.sh", "omelet/guest"),
+        ("../../omelet/guest/traefik.yml", "omelet/guest"),
+        ("../../omelet/templates/nginx-hello/docker-compose.yml",
+         "omelet/templates/nginx-hello"),
+        ("../../omelet/providers/omelet.yaml", "omelet/providers"),
     ],
-    hiddenimports=["runtime.setup_app.app"],
+    hiddenimports=["omelet.setup_app.app"],
 )
 pyz = PYZ(a.pure)
 
@@ -19,7 +19,7 @@ pyz = PYZ(a.pure)
 # console, so anything typer echoes from it is discarded and PowerShell does
 # not wait on it ($LASTEXITCODE would be stale). The CLI therefore must be
 # console; the setup window must not be, or it flashes a console behind itself.
-cli_exe = EXE(pyz, a.scripts, exclude_binaries=True, name="runtime", console=True)
+cli_exe = EXE(pyz, a.scripts, exclude_binaries=True, name="omelet", console=True)
 setup_exe = EXE(pyz, a.scripts, exclude_binaries=True, name="setup", console=False)
 
-coll = COLLECT(cli_exe, setup_exe, a.binaries, a.datas, name="LocalRuntime")
+coll = COLLECT(cli_exe, setup_exe, a.binaries, a.datas, name="Omelet")

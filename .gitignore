@@ -4,6 +4,6 @@ __pycache__/
 venv/
 *.egg-info/
 .pytest_cache/
-.runtime/
+.omelet/
 *.db
-runtime.cmd
+omelet.cmd

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MARKER=/opt/runtime/.bootstrapped
+MARKER=/opt/omelet/.bootstrapped
 WANT_VERSION="${1:-1}"
 
 if [[ -f "$MARKER" ]] && [[ "$(cat "$MARKER")" == "$WANT_VERSION" ]]; then
@@ -41,21 +41,21 @@ systemctl enable --now docker
 /usr/bin/docker network inspect edge >/dev/null 2>&1 || /usr/bin/docker network create edge
 
 # 4. project root
-mkdir -p /opt/runtime/projects
+mkdir -p /opt/omelet/projects
 
 # 5. traefik as a container, single entrypoint on :39080
 # v3.6 or newer is required: earlier releases ask the daemon for Docker API
 # 1.24, which docker-ce 29 refuses, leaving the docker provider empty and
 # every route answering 404.
-mkdir -p /opt/runtime/traefik
-cp "$(dirname "$0")/traefik.yml" /opt/runtime/traefik/traefik.yml 2>/dev/null || true
+mkdir -p /opt/omelet/traefik
+cp "$(dirname "$0")/traefik.yml" /opt/omelet/traefik/traefik.yml 2>/dev/null || true
 /usr/bin/docker rm -f traefik >/dev/null 2>&1 || true
 /usr/bin/docker run -d --name traefik --restart=always --network edge \
   -p 39080:39080 \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v /opt/runtime/traefik/traefik.yml:/etc/traefik/traefik.yml:ro \
+  -v /opt/omelet/traefik/traefik.yml:/etc/traefik/traefik.yml:ro \
   traefik:v3.7
 
 # 6. marker
-echo "$WANT_VERSION" > /opt/runtime/.bootstrapped
+echo "$WANT_VERSION" > /opt/omelet/.bootstrapped
 echo "bootstrap complete at version $WANT_VERSION"

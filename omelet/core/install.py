@@ -8,7 +8,7 @@ from typing import Callable
 
 # Resolved from this module rather than from cli.py: cli.py is the frozen
 # entry script, whose __file__ points at the bundle root instead of at
-# runtime/, so an entry-script lookup misses the bundled template.
+# omelet/, so an entry-script lookup misses the bundled template.
 VERIFY_TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "nginx-hello"
 
 
@@ -186,7 +186,7 @@ def finish_step(install_dir) -> str:
         "Setup finished successfully.\n"
         f"The virtual machine and its files are in: {install_dir}\n\n"
         "To start a project, open PowerShell and run:\n\n"
-        "    runtime up <folder>\n\n"
+        "    omelet up <folder>\n\n"
         "where <folder> is the folder that holds your docker-compose.yml.")
 
 

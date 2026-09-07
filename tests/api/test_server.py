@@ -1,4 +1,4 @@
-from runtime.api.server import dispatch
+from omelet.api.server import dispatch
 
 
 def test_dispatch_calls_handler_and_echoes_id():

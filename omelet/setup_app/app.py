@@ -5,7 +5,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 
-from runtime.core.install import (
+from omelet.core.install import (
     RESUME_NOTICE, DeadEnd, InstallError, Progress, RebootRequired, run_install,
 )
 
@@ -58,7 +58,7 @@ def run_window(steps, state, *, resumed: bool = False) -> int:
             events.put(None)
 
     root = tk.Tk()
-    root.title("Local Runtime Setup")
+    root.title("Omelet Setup")
     root.geometry("560x540")
 
     def on_close():

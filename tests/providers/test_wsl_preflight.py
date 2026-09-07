@@ -1,4 +1,4 @@
-from runtime.providers.wsl_checks import parse_wsl_version, preflight_checks
+from omelet.providers.wsl_checks import parse_wsl_version, preflight_checks
 
 # Captured from a real `wsl --version` on Windows 11.
 REAL_WSL_VERSION = """WSL version: 2.3.26.0

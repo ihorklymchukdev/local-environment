@@ -1,10 +1,10 @@
 import pytest
 
-from runtime.core.install import (
+from omelet.core.install import (
     DeadEnd, InstallError, InstallState, Progress, RebootRequired, Step,
     preflight_step, reboot_gate_step, remediate_step, run_install,
 )
-from runtime.core.provider import CheckResult, Diagnosis
+from omelet.core.provider import CheckResult, Diagnosis
 
 
 def _recorder():

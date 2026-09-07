@@ -8,9 +8,9 @@ $repo = (Resolve-Path "$PSScriptRoot\..\..").Path
 # PowerShell's call operator rejects bare relative paths: `& .venv\...` is
 # parsed as a module name, not a program. Every invocation below is absolute.
 $venvPython = Join-Path $repo '.venv\Scripts\python.exe'
-$cliExe     = Join-Path $repo 'dist\LocalRuntime\runtime.exe'
-$setupExe   = Join-Path $repo 'dist\LocalRuntime\setup.exe'
-$specFile   = Join-Path $repo 'packaging\windows\runtime.spec'
+$cliExe     = Join-Path $repo 'dist\Omelet\omelet.exe'
+$setupExe   = Join-Path $repo 'dist\Omelet\setup.exe'
+$specFile   = Join-Path $repo 'packaging\windows\omelet.spec'
 $issFile    = Join-Path $repo 'packaging\windows\installer.iss'
 
 function Resolve-Iscc {
@@ -50,22 +50,22 @@ try {
 
     $version = (Select-String -Path (Join-Path $repo 'pyproject.toml') `
         -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
-    Write-Host "==> Building Local Runtime $version"
+    Write-Host "==> Building Omelet $version"
 
     & $venvPython -m PyInstaller --noconfirm --clean $specFile
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
 
-    # Only runtime.exe is smoke-tested: setup.exe is the same code frozen for the
+    # Only omelet.exe is smoke-tested: setup.exe is the same code frozen for the
     # GUI subsystem, which PowerShell neither waits on nor reads output from.
     if (-not (Test-Path $setupExe)) { throw "setup.exe was not built." }
 
     & $cliExe version
-    if ($LASTEXITCODE -ne 0) { throw "Smoke test failed: runtime.exe version." }
+    if ($LASTEXITCODE -ne 0) { throw "Smoke test failed: omelet.exe version." }
     # version never touches disk, so it can pass on a bundle that's missing a
     # datas entry; selfcheck resolves each bundled asset the way the real
     # code does and catches that class of failure before it reaches a user.
     & $cliExe selfcheck
-    if ($LASTEXITCODE -ne 0) { throw "Smoke test failed: runtime.exe selfcheck reported a missing bundled asset." }
+    if ($LASTEXITCODE -ne 0) { throw "Smoke test failed: omelet.exe selfcheck reported a missing bundled asset." }
 
     if (-not $InnoSetup) { $InnoSetup = Resolve-Iscc }
     if (-not $InnoSetup -or -not (Test-Path $InnoSetup)) {
@@ -76,9 +76,9 @@ try {
                "%LOCALAPPDATA%\Programs, and PATH.")
     }
     Write-Host "==> ISCC: $InnoSetup"
-    $env:RUNTIME_VERSION = $version
+    $env:OMELET_VERSION = $version
     & $InnoSetup $issFile
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed." }
 
-    Write-Host "==> dist\LocalRuntimeSetup-$version.exe" -ForegroundColor Green
+    Write-Host "==> dist\OmeletSetup-$version.exe" -ForegroundColor Green
 } finally { Pop-Location }

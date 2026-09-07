@@ -1,8 +1,8 @@
 import pytest
 
-from runtime.core.bootstrap import bootstrap, read_marker, BootstrapError
-from runtime.core.provider import Completed
-from runtime.core import constants
+from omelet.core.bootstrap import bootstrap, read_marker, BootstrapError
+from omelet.core.provider import Completed
+from omelet.core import constants
 
 
 class FakeProvider:
@@ -57,9 +57,9 @@ def test_bootstrap_runs_when_force_true():
     assert ran, "expected bootstrap.sh to run as root when force=True"
 
 
-# The upload writes *to* /opt/runtime/bin/bootstrap.sh, so only the `bash <path>`
+# The upload writes *to* /opt/omelet/bin/bootstrap.sh, so only the `bash <path>`
 # form (no -lc) identifies the script actually running.
-SCRIPT_RUN = "bash /opt/runtime/bin/bootstrap.sh"
+SCRIPT_RUN = "bash /opt/omelet/bin/bootstrap.sh"
 
 
 def test_bootstrap_raises_with_guest_stderr_when_script_fails():
@@ -99,7 +99,7 @@ def test_push_file_strips_crlf_so_bash_can_read_the_script(tmp_path, monkeypatch
     # A Windows checkout (core.autocrlf) turns bootstrap.sh into CRLF. Bash then
     # reads line 2 as `set -euo pipefail\r` and aborts with "invalid option
     # name" -- which is exactly how the first real Windows build failed.
-    import runtime.core.bootstrap as bs
+    import omelet.core.bootstrap as bs
 
     crlf_assets = tmp_path / "guest"
     crlf_assets.mkdir()
@@ -110,7 +110,7 @@ def test_push_file_strips_crlf_so_bash_can_read_the_script(tmp_path, monkeypatch
     p = FakeProvider(marker_value="")
     bootstrap(p)
 
-    script = _pushed_payload(p, "/opt/runtime/bin/bootstrap.sh")
+    script = _pushed_payload(p, "/opt/omelet/bin/bootstrap.sh")
     assert b"\r" not in script, "CRLF reached the Linux guest"
     assert script.splitlines()[1] == b"set -euo pipefail"
-    assert b"\r" not in _pushed_payload(p, "/opt/runtime/bin/traefik.yml")
+    assert b"\r" not in _pushed_payload(p, "/opt/omelet/bin/traefik.yml")

@@ -1,8 +1,8 @@
-from runtime.core.project import (
+from omelet.core.project import (
     load_project, classify, overlay_yaml,
     STARTED_OK, FAILED_TO_START, CRASH_LOOPING,
 )
-from runtime.core.provider import Completed
+from omelet.core.provider import Completed
 import yaml
 
 

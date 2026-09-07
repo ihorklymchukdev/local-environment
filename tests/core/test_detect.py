@@ -1,5 +1,5 @@
 import pytest
-from runtime.core.detect import detect_web, WebSpec, AmbiguousError
+from omelet.core.detect import detect_web, WebSpec, AmbiguousError
 
 
 def test_single_service_with_published_port():

@@ -9,7 +9,7 @@
 param(
     # Use a rootfs already on disk instead of downloading one.
     [string]$Rootfs,
-    # Install only; skip `runtime vm create`.
+    # Install only; skip `omelet vm create`.
     [switch]$NoCreate
 )
 
@@ -43,7 +43,7 @@ if (-not (Test-Path $venvPython)) {
     if ($LASTEXITCODE -ne 0) { Fail "venv creation failed." }
 }
 
-Step "Installing the runtime package"
+Step "Installing the omelet package"
 # Called through the venv's python so no activation (and no execution policy) is needed.
 & $venvPython -m pip install --quiet --upgrade pip
 Push-Location $repo
@@ -52,21 +52,21 @@ try {
 } finally { Pop-Location }
 if ($LASTEXITCODE -ne 0) { Fail "pip install failed." }
 
-$runtimeExe = Join-Path $repo '.venv\Scripts\runtime.exe'
-if (-not (Test-Path $runtimeExe)) { Fail "Install finished but $runtimeExe is missing." }
+$omeletExe = Join-Path $repo '.venv\Scripts\omelet.exe'
+if (-not (Test-Path $omeletExe)) { Fail "Install finished but $omeletExe is missing." }
 
-# Shim so `.\runtime <cmd>` works from this directory without activating the venv.
+# Shim so `.\omelet <cmd>` works from this directory without activating the venv.
 @"
 @echo off
-"%~dp0.venv\Scripts\runtime.exe" %*
-"@ | Set-Content -Path (Join-Path $repo 'runtime.cmd') -Encoding ASCII
+"%~dp0.venv\Scripts\omelet.exe" %*
+"@ | Set-Content -Path (Join-Path $repo 'omelet.cmd') -Encoding ASCII
 
 # --- 3. host check ------------------------------------------------------------
 Step "Checking this host"
-& $runtimeExe doctor
+& $omeletExe doctor
 if ($LASTEXITCODE -ne 0) { Fail "Host check failed — fix the items above, then re-run." }
 
-if ($NoCreate) { Step "Done (skipped VM create). Run: .\runtime vm create"; exit 0 }
+if ($NoCreate) { Step "Done (skipped VM create). Run: .\omelet vm create"; exit 0 }
 
 # --- 4. rootfs ----------------------------------------------------------------
 # Canonical's official WSL images, the same ones Microsoft's WSL distro
@@ -88,7 +88,7 @@ if ($Rootfs) {
     $rootfsPath = (Resolve-Path $Rootfs).Path
 } else {
     $image = $images[$arch]
-    $cache = Join-Path $env:LOCALAPPDATA 'Runtime\cache'
+    $cache = Join-Path $env:LOCALAPPDATA 'Omelet\cache'
     New-Item -ItemType Directory -Force -Path $cache | Out-Null
     $rootfsPath = Join-Path $cache (Split-Path $image.Url -Leaf)
 
@@ -116,10 +116,10 @@ Write-Host "    rootfs: $rootfsPath"
 
 # --- 5. create + bootstrap the VM --------------------------------------------
 Step "Creating the VM and installing Docker + Traefik (several minutes)"
-$env:RUNTIME_ROOTFS = $rootfsPath
-& $runtimeExe vm create
+$env:OMELET_ROOTFS = $rootfsPath
+& $omeletExe vm create
 if ($LASTEXITCODE -ne 0) { Fail "VM setup failed — see the error above." }
 
 Write-Host ""
 Write-Host "Ready. Start a project with:" -ForegroundColor Green
-Write-Host "    .\runtime up <path-to-project>"
+Write-Host "    .\omelet up <path-to-project>"

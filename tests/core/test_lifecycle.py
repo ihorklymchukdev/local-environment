@@ -1,8 +1,8 @@
-from runtime.core.lifecycle import compose_up, _compose_argv
-from runtime.core.project import Project, STARTED_OK
-from runtime.core.detect import WebSpec
-from runtime.core.provider import Completed
-from runtime.core import constants
+from omelet.core.lifecycle import compose_up, _compose_argv
+from omelet.core.project import Project, STARTED_OK
+from omelet.core.detect import WebSpec
+from omelet.core.provider import Completed
+from omelet.core import constants
 
 
 class FakeProvider:
@@ -23,7 +23,7 @@ def test_compose_argv_uses_both_files_in_order():
     assert argv[:2] == ["/usr/bin/docker", "compose"]
     assert argv.count("-f") == 2
     assert f"{d}/docker-compose.yml" in argv
-    assert f"{d}/.runtime/overlay.yml" in argv
+    assert f"{d}/.omelet/overlay.yml" in argv
     assert argv[-2:] == ["up", "-d"]
 
 
@@ -43,8 +43,8 @@ def test_compose_up_returns_url_and_status(tmp_path):
 def test_compose_up_carries_the_guest_error_when_the_stack_fails():
     # A bare status like "failed_to_start" is unactionable: the reason lives in
     # compose's own stderr, which used to be discarded.
-    from runtime.core.provider import Completed
-    from runtime.core.project import FAILED_TO_START
+    from omelet.core.provider import Completed
+    from omelet.core.project import FAILED_TO_START
 
     class FailingProvider(FakeProvider):
         def exec(self, argv, *, root=False):

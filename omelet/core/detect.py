@@ -39,4 +39,4 @@ def detect_web(compose: dict) -> list[WebSpec]:
 
     raise AmbiguousError(
         "multiple services and none publish a port; "
-        "declare `web:` explicitly in .runtime/project.yml")
+        "declare `web:` explicitly in .omelet/project.yml")

@@ -2,8 +2,8 @@ import hashlib
 import io
 import pytest
 
-from runtime.core.images import Image, WSL_IMAGES
-from runtime.core.download import fetch, sha256_of, ChecksumMismatch
+from omelet.core.images import Image, WSL_IMAGES
+from omelet.core.download import fetch, sha256_of, ChecksumMismatch
 
 PAYLOAD = b"ubuntu-rootfs-bytes"
 DIGEST = hashlib.sha256(PAYLOAD).hexdigest()

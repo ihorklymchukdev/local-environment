@@ -1,6 +1,6 @@
-import runtime.providers as providers
-from runtime.providers.wsl2 import Wsl2Provider
-from runtime.providers.lima import LimaProvider
+import omelet.providers as providers
+from omelet.providers.wsl2 import Wsl2Provider
+from omelet.providers.lima import LimaProvider
 
 
 def test_factory_returns_wsl2_on_windows(monkeypatch):
@@ -24,6 +24,6 @@ def test_factory_rejects_unsupported(monkeypatch):
 
 def test_both_providers_satisfy_the_vm_provider_protocol():
     # Catches a Protocol member added without updating the implementations.
-    from runtime.core.provider import VmProvider
+    from omelet.core.provider import VmProvider
     assert isinstance(Wsl2Provider(), VmProvider)
     assert isinstance(LimaProvider(), VmProvider)

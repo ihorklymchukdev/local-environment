@@ -1,9 +1,9 @@
 import typer
 
-from runtime.core.diagnose import render_diagnosis
-from runtime.providers import get_provider
+from omelet.core.diagnose import render_diagnosis
+from omelet.providers import get_provider
 
-app = typer.Typer(help="Local Runtime: VM + Docker + one exposed port.", no_args_is_help=True)
+app = typer.Typer(help="Omelet: VM + Docker + one exposed port.", no_args_is_help=True)
 
 _provider_factory = get_provider  # tests override this
 
@@ -14,13 +14,13 @@ def _provider():
 
 @app.callback()
 def callback():
-    """Local Runtime CLI."""
+    """Omelet CLI."""
 
 
 @app.command()
 def version():
-    """Print the runtime version."""
-    typer.echo("runtime 0.1.0")
+    """Print the Omelet version."""
+    typer.echo("omelet 0.1.0")
 
 
 @app.command()
@@ -32,14 +32,14 @@ def doctor():
     raise typer.Exit(code=0 if diag.ok else 1)
 
 
-vm = typer.Typer(help="Manage the runtime VM.", no_args_is_help=True)
+vm = typer.Typer(help="Manage the Omelet VM.", no_args_is_help=True)
 app.add_typer(vm, name="vm")
 
 
 @vm.command("create")
 def vm_create():
     """Create the VM and bootstrap Docker + Traefik inside it."""
-    from runtime.core.bootstrap import bootstrap, BootstrapError
+    from omelet.core.bootstrap import bootstrap, BootstrapError
     p = _provider()
     if p.exists():
         typer.echo("VM already exists; bootstrapping (idempotent).")
@@ -80,15 +80,15 @@ from pathlib import Path as _Path
 def up(directory: str = typer.Argument(".", help="Project directory with a docker-compose.yml")):
     """Bring a compose project up and print its URL(s)."""
     import yaml
-    from runtime.core import constants
-    from runtime.core.project import load_project, STARTED_OK
-    from runtime.core.lifecycle import push_project, compose_up
-    from runtime.core.state import State
-    from runtime.providers import default_install_dir
+    from omelet.core import constants
+    from omelet.core.project import load_project, STARTED_OK
+    from omelet.core.lifecycle import push_project, compose_up
+    from omelet.core.state import State
+    from omelet.providers import default_install_dir
 
     local = _Path(directory).resolve()
     compose_dict = yaml.safe_load((local / "docker-compose.yml").read_text()) or {}
-    pyml_path = local / ".runtime" / "project.yml"
+    pyml_path = local / ".omelet" / "project.yml"
     pyml = yaml.safe_load(pyml_path.read_text()) if pyml_path.exists() else None
     project = load_project(compose_dict, pyml, local.name)
 
@@ -105,7 +105,7 @@ def up(directory: str = typer.Argument(".", help="Project directory with a docke
         for u in urls:
             typer.echo(f"  {u}")
     else:
-        typer.echo(f"Project status: {status}. Run `runtime logs {project.id}`.")
+        typer.echo(f"Project status: {status}. Run `omelet logs {project.id}`.")
         if detail:
             typer.echo(detail)
         raise typer.Exit(code=1)
@@ -114,7 +114,7 @@ def up(directory: str = typer.Argument(".", help="Project directory with a docke
 @app.command()
 def down(project_id: str):
     """Stop a project's containers."""
-    from runtime.core.lifecycle import compose_down
+    from omelet.core.lifecycle import compose_down
     compose_down(_provider(), project_id)
     typer.echo(f"{project_id} stopped.")
 
@@ -122,9 +122,9 @@ def down(project_id: str):
 @app.command()
 def status():
     """List known projects and their status."""
-    from runtime.core.state import State
-    from runtime.core import constants
-    from runtime.providers import default_install_dir
+    from omelet.core.state import State
+    from omelet.core import constants
+    from omelet.providers import default_install_dir
     state = State(default_install_dir().parent / "state.db")
     rows = state.list_projects()
     if not rows:
@@ -138,16 +138,16 @@ def status():
 @app.command()
 def logs(project_id: str, service: str = typer.Option(None)):
     """Show a project's container logs."""
-    from runtime.core.lifecycle import project_logs
+    from omelet.core.lifecycle import project_logs
     typer.echo(project_logs(_provider(), project_id, service))
 
 
 @app.command()
 def destroy(project_id: str):
     """Stop and forget a project."""
-    from runtime.core.lifecycle import compose_down
-    from runtime.core.state import State
-    from runtime.providers import default_install_dir
+    from omelet.core.lifecycle import compose_down
+    from omelet.core.state import State
+    from omelet.providers import default_install_dir
     compose_down(_provider(), project_id)
     State(default_install_dir().parent / "state.db").remove_project(project_id)
     typer.echo(f"{project_id} destroyed.")
@@ -158,12 +158,12 @@ def setup(resume: bool = typer.Option(False, "--resume"),
           headless: bool = typer.Option(False, "--headless")):
     """Set up everything: check the host, create the VM, install Docker."""
     import sys as _sys
-    from runtime.core import constants
-    from runtime.core.install import (
+    from omelet.core import constants
+    from omelet.core.install import (
         RESUME_NOTICE, VERIFY_TEMPLATE, DeadEnd, InstallError, InstallState, Progress,
         RebootRequired, default_steps, run_install,
     )
-    from runtime.providers import default_install_dir
+    from omelet.providers import default_install_dir
 
     root = default_install_dir().parent
     provider = _provider()
@@ -185,7 +185,7 @@ def setup(resume: bool = typer.Option(False, "--resume"),
             typer.echo(progress.message)
 
     if not headless:
-        from runtime.setup_app.app import run_window
+        from omelet.setup_app.app import run_window
         raise typer.Exit(code=run_window(steps, state, resumed=resume))
 
     if resume:
@@ -214,8 +214,8 @@ def uninstall(purge: bool = typer.Option(False, "--purge")):
                    "Re-run with --purge to confirm.")
         raise typer.Exit(code=1)
     import shutil
-    from runtime.core.install import InstallState
-    from runtime.providers import default_install_dir
+    from omelet.core.install import InstallState
+    from omelet.providers import default_install_dir
 
     destroy_error = None
     try:
@@ -252,16 +252,16 @@ def selfcheck():
     is caught by running the exe, not discovered by a user mid-setup.
     """
     from pathlib import Path
-    from runtime.core.bootstrap import _ASSETS
-    from runtime.core.install import VERIFY_TEMPLATE
-    import runtime.providers as _providers
+    from omelet.core.bootstrap import _ASSETS
+    from omelet.core.install import VERIFY_TEMPLATE
+    import omelet.providers as _providers
 
     checks = [
-        ("runtime/guest/bootstrap.sh", _ASSETS / "bootstrap.sh"),
-        ("runtime/guest/traefik.yml", _ASSETS / "traefik.yml"),
-        ("runtime/templates/nginx-hello/docker-compose.yml",
+        ("omelet/guest/bootstrap.sh", _ASSETS / "bootstrap.sh"),
+        ("omelet/guest/traefik.yml", _ASSETS / "traefik.yml"),
+        ("omelet/templates/nginx-hello/docker-compose.yml",
          VERIFY_TEMPLATE / "docker-compose.yml"),
-        ("runtime/providers/runtime.yaml", Path(_providers.__file__).parent / "runtime.yaml"),
+        ("omelet/providers/omelet.yaml", Path(_providers.__file__).parent / "omelet.yaml"),
     ]
 
     all_ok = True

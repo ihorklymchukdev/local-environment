@@ -3,7 +3,7 @@
 **Goal:** find out whether `LimaProvider` can create a VM and serve HTTP 200,
 before anyone builds a `.pkg` around it. Output is an answer, not code to keep.
 
-`runtime/providers/lima.py` and `runtime/providers/runtime.yaml` are marked
+`omelet/providers/lima.py` and `omelet/providers/omelet.yaml` are marked
 UNVERIFIED — written for parity against the `VmProvider` contract and never
 executed. Their command construction is unit-tested; nothing else is.
 
@@ -34,7 +34,7 @@ platform-free, which would be a finding in itself.
 ## Step 2 — doctor
 
 ```bash
-runtime doctor
+omelet doctor
 ```
 
 Expect a single check, `limactl installed`, passing, and exit code 0.
@@ -45,10 +45,10 @@ provider".
 ## Step 3 — VM create (the first real unknown)
 
 ```bash
-runtime vm create
+omelet vm create
 ```
 
-This runs `limactl start --name=runtime-vm --tty=false <repo>/runtime/providers/runtime.yaml`
+This runs `limactl start --name=omelet-vm --tty=false <repo>/omelet/providers/omelet.yaml`
 and then the guest bootstrap. Watch for:
 
 - Does `limactl start` accept a config path as a positional argument in your
@@ -57,15 +57,15 @@ and then the guest bootstrap. Watch for:
 - Does `vmType: vz` start, or does it need `qemu`?
 - Does `rosetta.enabled: true` prompt for a license, block, or fail?
 - Does the arm64 Ubuntu 24.04 cloud image download and boot?
-- Does `limactl shell runtime-vm sudo ...` work without an interactive password
+- Does `limactl shell omelet-vm sudo ...` work without an interactive password
   prompt? `LimaProvider.exec(root=True)` just prepends `sudo` — if Lima's guest
   requires a TTY for sudo, this hangs or fails.
 
 Then confirm the guest side:
 
 ```bash
-limactl shell runtime-vm sudo docker ps           # traefik running?
-limactl shell runtime-vm cat /opt/runtime/.bootstrapped   # should print 1
+limactl shell omelet-vm sudo docker ps           # traefik running?
+limactl shell omelet-vm cat /opt/omelet/.bootstrapped   # should print 1
 ```
 
 If bootstrap failed, it now raises with the guest's own stderr — capture that
@@ -74,7 +74,7 @@ message verbatim.
 ## Step 4 — end to end
 
 ```bash
-runtime up ./runtime/templates/nginx-hello
+omelet up ./omelet/templates/nginx-hello
 ```
 
 Record the printed URL, then:
@@ -90,21 +90,21 @@ If it fails, isolate where:
 
 ```bash
 curl -v http://127.0.0.1:39080                    # does the port forward work at all?
-limactl shell runtime-vm sudo docker ps           # is the container up?
-limactl shell runtime-vm sudo docker logs traefik # is Traefik routing?
+limactl shell omelet-vm sudo docker ps           # is the container up?
+limactl shell omelet-vm sudo docker logs traefik # is Traefik routing?
 ```
 
-The `portForwards` block in `runtime.yaml` is declarative and, like everything
+The `portForwards` block in `omelet.yaml` is declarative and, like everything
 else here, unverified — a failure at `127.0.0.1:39080` with a healthy container
 points there.
 
 ## Step 5 — lifecycle
 
 ```bash
-runtime status
-runtime down nginx-hello
-runtime vm stop
-runtime vm destroy       # should leave no VM in `limactl list`
+omelet status
+omelet down nginx-hello
+omelet vm stop
+omelet vm destroy       # should leave no VM in `limactl list`
 ```
 
 ## Report

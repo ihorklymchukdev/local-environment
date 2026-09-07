@@ -1,13 +1,13 @@
 """The wiring of the real step list — the seam where findings survived review.
 
 Every other install test builds its own toy steps, so nothing exercised the
-list `runtime setup` actually runs.
+list `omelet setup` actually runs.
 """
 import pytest
 
-from runtime.core.images import Image
-from runtime.core.install import InstallError, InstallState, default_steps, run_install
-from runtime.core.provider import CheckResult, Diagnosis
+from omelet.core.images import Image
+from omelet.core.install import InstallError, InstallState, default_steps, run_install
+from omelet.core.provider import CheckResult, Diagnosis
 
 IMAGE = Image("https://example.invalid/ubuntu-24.04.4-wsl-amd64.wsl", "0" * 64)
 
@@ -38,7 +38,7 @@ def build(provider, tmp_path, **overrides):
         cache_dir=tmp_path / "cache",
         template_dir=tmp_path / "template",
         domain="127-0-0-1.sslip.io",
-        exe_path=r"C:\Apps\LocalRuntime\setup.exe",
+        exe_path=r"C:\Apps\Omelet\setup.exe",
         install_dir=tmp_path / "vm",
     )
     return default_steps(provider, **{**kwargs, **overrides})
@@ -106,7 +106,7 @@ def test_finish_names_the_install_location_and_the_next_command(tmp_path):
                   "verify": lambda: None})
     finish = next(e for e in events if e.step == "finish" and e.status == "done")
     assert str(tmp_path / "vm") in finish.message
-    assert "runtime up" in finish.message
+    assert "omelet up" in finish.message
     assert "succe" in finish.message.lower()
 
 
@@ -126,10 +126,10 @@ def test_a_failure_carries_a_suggested_action_not_just_the_raw_error(tmp_path):
 
 
 def test_the_gate_registers_resume_before_asking_for_a_restart(tmp_path):
-    from runtime.core.install import RebootRequired
+    from omelet.core.install import RebootRequired
 
     provider = FakeProvider(reboot=True)
     state = InstallState(tmp_path / "state.json")
     with pytest.raises(RebootRequired):
         run(build(provider, tmp_path), state, {})
-    assert provider.resumed_with == r"C:\Apps\LocalRuntime\setup.exe"
+    assert provider.resumed_with == r"C:\Apps\Omelet\setup.exe"

@@ -1,4 +1,4 @@
-from runtime.providers.wsl_encoding import decode_wsl
+from omelet.providers.wsl_encoding import decode_wsl
 
 
 def test_decodes_utf16le_meta_output():

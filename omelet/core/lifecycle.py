@@ -21,7 +21,7 @@ def _compose_argv(project_id: str) -> list[str]:
     d = _guest_dir(project_id)
     return [DOCKER, "compose",
             "-f", f"{d}/docker-compose.yml",
-            "-f", f"{d}/.runtime/overlay.yml",
+            "-f", f"{d}/.omelet/overlay.yml",
             "up", "-d"]
 
 
@@ -43,8 +43,8 @@ def _write_overlay(provider, project: Project, domain: str) -> None:
     text = overlay_yaml(project, domain)
     encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
     provider.exec(["bash", "-lc",
-                   f"mkdir -p {d}/.runtime && echo {encoded} | base64 -d "
-                   f"> {d}/.runtime/overlay.yml"], root=True)
+                   f"mkdir -p {d}/.omelet && echo {encoded} | base64 -d "
+                   f"> {d}/.omelet/overlay.yml"], root=True)
 
 
 def _urls(project: Project, domain: str) -> list[str]:
@@ -70,7 +70,7 @@ def compose_up(provider, project: Project, local_dir, domain: str):
 def compose_down(provider, project_id: str):
     d = _guest_dir(project_id)
     return provider.exec([DOCKER, "compose", "-f", f"{d}/docker-compose.yml",
-                          "-f", f"{d}/.runtime/overlay.yml", "down"], root=True)
+                          "-f", f"{d}/.omelet/overlay.yml", "down"], root=True)
 
 
 def project_logs(provider, project_id: str, service: str | None = None) -> str:

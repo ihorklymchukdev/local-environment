@@ -1,4 +1,4 @@
-# Local Runtime (PoC)
+# Omelet (PoC)
 
 Bring up a Linux VM, install Docker in it, run any `docker-compose` project, and
 get a working URL on the host. Windows/WSL2 (verified by unit tests) and
@@ -15,14 +15,14 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1
 `-ExecutionPolicy Bypass` applies to that one invocation only; it changes
 nothing on your machine. The script finds a Python 3.12+, builds `.venv`,
 installs the package, downloads and checksums the Ubuntu 24.04 rootfs into
-`%LOCALAPPDATA%\Runtime\cache` (~400 MB, once), then creates the VM and
+`%LOCALAPPDATA%\Omelet\cache` (~400 MB, once), then creates the VM and
 installs Docker + Traefik in it. Expect several minutes on the first run.
 
-It also drops a `runtime.cmd` shim in the repo, so afterwards:
+It also drops a `omelet.cmd` shim in the repo, so afterwards:
 
 ```powershell
-.\runtime up .\my-project   # prints http://my-project.127-0-0-1.sslip.io:39080
-.\runtime status
+.\omelet up .\my-project   # prints http://my-project.127-0-0-1.sslip.io:39080
+.\omelet status
 ```
 
 Useful flags: `-Rootfs <path>` to use a rootfs you already have,
@@ -36,10 +36,10 @@ you run it from a WSL shell.
 
 ```bash
 pip install -e ".[dev]"
-runtime doctor            # reports what this host is missing, non-zero if unsupported
+omelet doctor            # reports what this host is missing, non-zero if unsupported
 ```
 
-On Windows, `runtime vm create` additionally needs `RUNTIME_ROOTFS` pointing at
+On Windows, `omelet vm create` additionally needs `OMELET_ROOTFS` pointing at
 an Ubuntu 24.04 rootfs — Canonical's official WSL image, the same file
 Microsoft's WSL distro manifest points at:
 
@@ -52,42 +52,42 @@ value must be a **Windows** path — it goes straight to `wsl.exe --import`,
 which cannot resolve a WSL-side `/home/...` path.
 
 ```powershell
-$env:RUNTIME_ROOTFS = "C:\Users\you\Downloads\ubuntu-24.04.4-wsl-amd64.wsl"
-runtime vm create
+$env:OMELET_ROOTFS = "C:\Users\you\Downloads\ubuntu-24.04.4-wsl-amd64.wsl"
+omelet vm create
 ```
 
-`vm create` imports the `runtime-vm` distro under `%LOCALAPPDATA%\Runtime\vm`,
+`vm create` imports the `omelet-vm` distro under `%LOCALAPPDATA%\Omelet\vm`,
 enables systemd, and bootstraps Docker + Traefik inside it. The imported distro
 runs as root: `create()` replaces `/etc/wsl.conf` with a `[boot] systemd=true`
-stanza, dropping the image's default-user setting. `RUNTIME_ROOTFS` is read
+stanza, dropping the image's default-user setting. `OMELET_ROOTFS` is read
 only by `vm create`; no other command needs it.
 
 Manage running projects and the VM:
 
 ```bash
-runtime status            # list known projects and their status
-runtime logs <id>         # show a project's container logs
-runtime down <id>         # stop a project's containers
-runtime destroy <id>      # stop and forget a project
-runtime vm stop           # stop the VM
-runtime vm destroy        # destroy the VM
+omelet status            # list known projects and their status
+omelet logs <id>         # show a project's container logs
+omelet down <id>         # stop a project's containers
+omelet destroy <id>      # stop and forget a project
+omelet vm stop           # stop the VM
+omelet vm destroy        # destroy the VM
 ```
 
 ## Looking inside the VM
 
-There is no `runtime shell` command; use `wsl.exe`. Note that every WSL distro
+There is no `omelet shell` command; use `wsl.exe`. Note that every WSL distro
 reports your Windows machine name as its hostname, so the prompt does not tell
-you which one you are in — always pass `-d runtime-vm`.
+you which one you are in — always pass `-d omelet-vm`.
 
 ```powershell
-wsl -d runtime-vm -u root                                     # a shell in the VM
-wsl -d runtime-vm -u root -- docker ps                        # traefik + projects
-wsl -d runtime-vm -u root -- cat /opt/runtime/.bootstrapped   # bootstrap version
-wsl -d runtime-vm -u root -- bash /opt/runtime/bin/bootstrap.sh 1   # re-run, live output
+wsl -d omelet-vm -u root                                     # a shell in the VM
+wsl -d omelet-vm -u root -- docker ps                        # traefik + projects
+wsl -d omelet-vm -u root -- cat /opt/omelet/.bootstrapped   # bootstrap version
+wsl -d omelet-vm -u root -- bash /opt/omelet/bin/bootstrap.sh 1   # re-run, live output
 ```
 
-Projects land in `/opt/runtime/projects/<id>/`, with the generated Traefik
-overlay at `<id>/.runtime/overlay.yml` beside your `docker-compose.yml`.
+Projects land in `/opt/omelet/projects/<id>/`, with the generated Traefik
+overlay at `<id>/.omelet/overlay.yml` beside your `docker-compose.yml`.
 
 ## Verified vs live
 

@@ -11,7 +11,7 @@ from .wsl_encoding import decode_wsl
 from .wsl_checks import diagnose_wsl2, preflight_checks
 
 RUNONCE_KEY = r"Software\Microsoft\Windows\CurrentVersion\RunOnce"
-_RESUME_VALUE_NAME = "LocalRuntimeSetup"
+_RESUME_VALUE_NAME = "OmeletSetup"
 
 # The user clicked No on the UAC prompt (ERROR_CANCELLED).
 ELEVATION_DECLINED = 1223
@@ -142,7 +142,7 @@ def _default_arch() -> str:
 
 
 class Wsl2Provider:
-    def __init__(self, distro="runtime-vm", install_dir: Path | None = None,
+    def __init__(self, distro="omelet-vm", install_dir: Path | None = None,
                  rootfs: Path | None = None, wsl="wsl.exe", runner=_default_runner,
                  facts=_default_facts, elevator=_default_elevator,
                  registry_writer=_default_registry_writer, arch=None):

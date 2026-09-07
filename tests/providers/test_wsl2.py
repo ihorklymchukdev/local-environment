@@ -1,5 +1,5 @@
 from pathlib import Path
-from runtime.providers.wsl2 import Wsl2Provider
+from omelet.providers.wsl2 import Wsl2Provider
 
 
 class FakeRunner:
@@ -19,7 +19,7 @@ class FakeRunner:
 
 def make(runner, install_dir=Path("/tmp/inst"), rootfs=Path("/tmp/ubuntu.tar.gz")):
     return Wsl2Provider(
-        distro="runtime-vm",
+        distro="omelet-vm",
         install_dir=install_dir,
         rootfs=rootfs,
         wsl="wsl.exe",
@@ -30,7 +30,7 @@ def make(runner, install_dir=Path("/tmp/inst"), rootfs=Path("/tmp/ubuntu.tar.gz"
 def test_exec_builds_passthrough_argv_and_decodes_utf8():
     r = FakeRunner(stdout=b"Linux 6.6\n")
     result = make(r).exec(["uname", "-sr"])
-    assert r.calls[-1] == ["wsl.exe", "-d", "runtime-vm", "--", "uname", "-sr"]
+    assert r.calls[-1] == ["wsl.exe", "-d", "omelet-vm", "--", "uname", "-sr"]
     assert result.stdout == "Linux 6.6"
     assert result.ok is True
 
@@ -38,11 +38,11 @@ def test_exec_builds_passthrough_argv_and_decodes_utf8():
 def test_exec_root_inserts_user_root():
     r = FakeRunner()
     make(r).exec(["id", "-un"], root=True)
-    assert r.calls[-1] == ["wsl.exe", "-d", "runtime-vm", "-u", "root", "--", "id", "-un"]
+    assert r.calls[-1] == ["wsl.exe", "-d", "omelet-vm", "-u", "root", "--", "id", "-un"]
 
 
 def test_exists_true_when_distro_in_list():
-    listing = "runtime-vm\r\nUbuntu\r\n".encode("utf-16-le")
+    listing = "omelet-vm\r\nUbuntu\r\n".encode("utf-16-le")
     r = FakeRunner(stdout=listing)
     assert make(r).exists() is True
     assert r.calls[-1] == ["wsl.exe", "-l", "-q"]
@@ -61,14 +61,14 @@ def test_create_imports_then_enables_systemd_then_terminates(tmp_path):
     make(r, install_dir=install, rootfs=rootfs).create()
     argvs = r.calls
     assert argvs[0][:2] == ["wsl.exe", "--import"]
-    assert argvs[0][2] == "runtime-vm"
+    assert argvs[0][2] == "omelet-vm"
     assert str(install) in argvs[0][3]
     assert str(rootfs) in argvs[0][4]
     assert argvs[0][-2:] == ["--version", "2"]
     # systemd fixup runs as root, writes wsl.conf
     assert any("-u" in a and "root" in a and "wsl.conf" in " ".join(a) for a in argvs)
     # ends by terminating so systemd takes effect
-    assert argvs[-1] == ["wsl.exe", "--terminate", "runtime-vm"]
+    assert argvs[-1] == ["wsl.exe", "--terminate", "omelet-vm"]
 
 
 def test_create_rejects_a_rootfs_path_that_does_not_exist():
@@ -96,6 +96,6 @@ def test_stop_terminates_and_destroy_unregisters():
     r = FakeRunner()
     p = make(r)
     p.stop()
-    assert r.calls[-1] == ["wsl.exe", "--terminate", "runtime-vm"]
+    assert r.calls[-1] == ["wsl.exe", "--terminate", "omelet-vm"]
     p.destroy()
-    assert r.calls[-1] == ["wsl.exe", "--unregister", "runtime-vm"]
+    assert r.calls[-1] == ["wsl.exe", "--unregister", "omelet-vm"]

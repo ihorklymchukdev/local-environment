@@ -2,6 +2,6 @@
 # (core.autocrlf=true) rewrites them to CRLF, and bash then reads line 2 of
 # bootstrap.sh as `set -euo pipefail\r` and aborts with "invalid option name".
 *.sh text eol=lf
-runtime/guest/** text eol=lf
-runtime/templates/** text eol=lf
-runtime/providers/runtime.yaml text eol=lf
+omelet/guest/** text eol=lf
+omelet/templates/** text eol=lf
+omelet/providers/omelet.yaml text eol=lf

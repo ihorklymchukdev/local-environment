@@ -1,4 +1,4 @@
-# Blueprint: Local Runtime (VM + Docker + Exposed Port)
+# Blueprint: Omelet (VM + Docker + Exposed Port)
 
 **PoC scope:** bring up a managed Linux VM, install Docker inside it, run a compose project, and hand back a working URL on the host. No UI, no AI, no deploy.
 
@@ -14,7 +14,7 @@ Don't abstract Docker — abstract the **VM**. Everything above the guest OS mus
 ┌─────────────────────────────────────────────┐
 │ HOST (Windows / macOS)                       │
 │                                              │
-│  runtime-cli (Python)                        │
+│  omelet-cli (Python)                        │
 │    └── VmProvider (abstraction)              │
 │          ├── Wsl2Provider   → wsl.exe        │
 │          └── LimaProvider   → limactl        │
@@ -31,7 +31,7 @@ Don't abstract Docker — abstract the **VM**. Everything above the guest OS mus
 │  ├── proj-a_db                               │
 │  └── proj-b_web                              │
 │                                              │
-│  /opt/runtime/projects/<id>/  ← files live here │
+│  /opt/omelet/projects/<id>/  ← files live here │
 └──────────────────────────────────────────────┘
 ```
 
@@ -66,8 +66,8 @@ Everything else (installing Docker, Traefik, compose up) is implemented **once**
 **Don't touch the user's default distro.** Create your own, isolated one:
 
 ```
-wsl --import runtime-vm %LOCALAPPDATA%\Runtime\vm ubuntu-24.04-rootfs.tar.gz --version 2
-wsl -d runtime-vm -u root -- /bin/bash /opt/runtime/bootstrap.sh
+wsl --import omelet-vm %LOCALAPPDATA%\Omelet\vm ubuntu-24.04-rootfs.tar.gz --version 2
+wsl -d omelet-vm -u root -- /bin/bash /opt/omelet/bootstrap.sh
 ```
 
 The rootfs comes from `cloud-images.ubuntu.com` (WSL variant or the base rootfs).
@@ -97,11 +97,11 @@ Note: `.wslconfig` is global across all of the user's distros. If you're changin
 ## 4. macOS: Lima
 
 ```
-limactl start --name=runtime-vm --tty=false ./runtime.yaml
-limactl shell runtime-vm sudo /opt/runtime/bootstrap.sh
+limactl start --name=omelet-vm --tty=false ./omelet.yaml
+limactl shell omelet-vm sudo /opt/omelet/bootstrap.sh
 ```
 
-`runtime.yaml`:
+`omelet.yaml`:
 ```yaml
 vmType: vz                 # Apple Virtualization, macOS 13+; qemu on Intel
 rosetta:
@@ -137,9 +137,9 @@ set -euo pipefail
 #    IMPORTANT: systemd is off by default in WSL →
 #    /etc/wsl.conf: [boot]\nsystemd=true, then wsl --terminate
 # 3. docker network create edge
-# 4. mkdir -p /opt/runtime/projects
+# 4. mkdir -p /opt/omelet/projects
 # 5. traefik as a container: docker provider, entrypoint :80, --restart=always
-# 6. write /opt/runtime/.bootstrapped with a version
+# 6. write /opt/omelet/.bootstrapped with a version
 ```
 
 Version the marker (`.bootstrapped` with a number). App update → new bootstrap → migration without recreating the VM.
@@ -152,10 +152,10 @@ Version the marker (`.bootstrapped` with a number). App update → new bootstrap
 
 Exactly one port is forwarded: `guest:80 → host:39080`. Traefik then routes by hostname via docker labels.
 
-**Key rule: the runtime never edits the user's compose file.** It generates a separate overlay and runs:
+**Key rule: Omelet never edits the user's compose file.** It generates a separate overlay and runs:
 
 ```
-docker compose -f docker-compose.yml -f .runtime/overlay.yml up -d
+docker compose -f docker-compose.yml -f .omelet/overlay.yml up -d
 ```
 
 `overlay.yml` is generated from the project metadata and attaches the `edge` network and a Traefik router to the right service:
@@ -175,7 +175,7 @@ networks:
 
 The user gets `http://myproj.<domain>:39080`.
 
-The compose file stays clean and runnable with a plain `docker compose up` on any VPS without your runtime — that's the parity this whole design exists for.
+The compose file stays clean and runnable with a plain `docker compose up` on any VPS without Omelet — that's the parity this whole design exists for.
 
 **Gotcha to settle during the PoC:** `*.localhost` resolves to `127.0.0.1` in Chrome, Edge and Firefox, but **Safari does not do this**. Options, best first:
 1. `<proj>.127-0-0-1.sslip.io` — public DNS, works everywhere, zero setup, but requires internet
@@ -188,9 +188,9 @@ For the PoC use (1) with (3) as fallback — test both browsers immediately, thi
 
 ## 6.5. Project contract: exactly two metadata fields
 
-The runtime **knows nothing about stacks**. It doesn't know what WordPress, Laravel, Next.js or Django are. It knows one thing: a project is a directory containing a `docker-compose.yml`.
+Omelet **knows nothing about stacks**. It doesn't know what WordPress, Laravel, Next.js or Django are. It knows one thing: a project is a directory containing a `docker-compose.yml`.
 
-Everything the runtime adds is derived from two fields in `.runtime/project.yml`:
+Everything Omelet adds is derived from two fields in `.omelet/project.yml`:
 
 ```yaml
 id: myproj
@@ -220,8 +220,8 @@ The most common mistake is keeping files on the host and mounting them into the 
 - **WSL2:** `/mnt/c/...` over 9p is several times slower. Any project with thousands of small files (`vendor/`, `node_modules/`) will crawl.
 - **macOS:** virtiofs is decent, but not native.
 
-**PoC approach:** the canonical copy lives in the guest (`/opt/runtime/projects/<id>`), and the host gets access over a network share:
-- Windows: `\\wsl$\runtime-vm\opt\runtime\projects\<id>` — works out of the box
+**PoC approach:** the canonical copy lives in the guest (`/opt/omelet/projects/<id>`), and the host gets access over a network share:
+- Windows: `\\wsl$\omelet-vm\opt\omelet\projects\<id>` — works out of the box
 - macOS: a reverse `limactl` mount, or SSHFS over Lima's SSH port
 
 Archive import: copy into the guest, then unpack there. Never unpack on the host.
@@ -231,12 +231,12 @@ Archive import: copy into the guest, then unpack there. Never unpack on the host
 ## 8. Repository structure
 
 ```
-runtime/
+omelet/
 ├── cli.py                  # Typer: up, down, status, logs, destroy
 ├── core/
 │   ├── provider.py         # Protocol + platform factory
 │   ├── project.py          # compose lifecycle (stack-agnostic)
-│   ├── overlay.py          # generates the runtime overlay from project.yml
+│   ├── overlay.py          # generates the Omelet overlay from project.yml
 │   ├── detect.py           # auto-detects web service and port from compose
 │   ├── state.py            # SQLite: projects, ports, snapshots
 │   └── diagnose.py         # preconditions + human-readable error messages
@@ -261,11 +261,11 @@ runtime/
 
 | # | Deliverable | Done when |
 |---|---|---|
-| M0 | `runtime doctor` | tells the user honestly what's missing and how to fix it, on both OSes |
-| M1 | `runtime vm create` | VM exists, `exec("uname -a")` works |
+| M0 | `omelet doctor` | tells the user honestly what's missing and how to fix it, on both OSes |
+| M1 | `omelet vm create` | VM exists, `exec("uname -a")` works |
 | M2 | bootstrap | `docker info` works in the guest, idempotent on re-run |
 | M3 | traefik + port | `curl localhost:39080` returns a Traefik 404 (that's success) |
-| M4 | `runtime up <dir>` | single-service compose (nginx) resolves in the browser |
+| M4 | `omelet up <dir>` | single-service compose (nginx) resolves in the browser |
 | M5 | state and dependencies | multi-service compose with a DB; data survives a VM restart |
 | M6 | concurrency | 3+ projects on different stacks running simultaneously, no collisions |
 | M7 | auto-detection | `detect.py` correctly guesses web service and port across all test compose files |
@@ -273,7 +273,7 @@ runtime/
 
 **PoC acceptance test — the most important thing in this document:**
 
-Take **five arbitrary `docker-compose.yml` files from GitHub** that you didn't write: something on PHP-FPM + nginx + MySQL, something on Node + Postgres, something on Python + Redis, something using `build:` instead of `image:`, and something with two HTTP services. Zero stack-specific code in the runtime.
+Take **five arbitrary `docker-compose.yml` files from GitHub** that you didn't write: something on PHP-FPM + nginx + MySQL, something on Node + Postgres, something on Python + Redis, something using `build:` instead of `image:`, and something with two HTTP services. Zero stack-specific code in Omelet.
 
 Success = all five come up with a single command, on Windows and on Mac, and each returns a working URL.
 
@@ -297,6 +297,6 @@ If any of them required adding something to the core, the abstraction is wrong �
 1. **systemd in WSL** — without it there's no proper `docker.service`. Fixed via `wsl.conf`, but it requires a `wsl --terminate` and a restart. Build this into the `create()` state machine, not into the docs.
 2. **First run.** Downloading the rootfs plus images means gigabytes. Measure the real elapsed time on an ordinary connection; if it's 15+ minutes the product is dead, and that needs thinking about now, not after the UI.
 3. **Antivirus on Windows** silently breaks VM creation. Catch the specific error and surface a clear message.
-4. **Apple Silicon vs x86 images.** Arbitrary compose files from the internet regularly reference images with no arm64 build. Rosetta in Lima covers this, but slower and not always. The runtime must **recognize** the situation and explain it clearly rather than dying with `exec format error` — this is the same class of problem you'll hit again on VPS deploy, so the mechanism pays for itself twice.
+4. **Apple Silicon vs x86 images.** Arbitrary compose files from the internet regularly reference images with no arm64 build. Rosetta in Lima covers this, but slower and not always. Omelet must **recognize** the situation and explain it clearly rather than dying with `exec format error` — this is the same class of problem you'll hit again on VPS deploy, so the mechanism pays for itself twice.
 5. **Port 39080 already in use.** Keep a range and record the chosen port in state.
-6. **Compose files that don't come up on their own.** Some GitHub projects need a `.env`, migrations, or a seed step. The runtime shouldn't try to fix this — but it must **clearly distinguish** "failed to start" from "started, but the service is crashing", and expose logs, exit codes and restart-loop causes. That's the same interface an agent will consume later.
+6. **Compose files that don't come up on their own.** Some GitHub projects need a `.env`, migrations, or a seed step. Omelet shouldn't try to fix this — but it must **clearly distinguish** "failed to start" from "started, but the service is crashing", and expose logs, exit codes and restart-loop causes. That's the same interface an agent will consume later.

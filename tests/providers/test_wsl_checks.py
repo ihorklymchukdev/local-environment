@@ -1,4 +1,4 @@
-from runtime.providers.wsl_checks import diagnose_wsl2
+from omelet.providers.wsl_checks import diagnose_wsl2
 
 
 class R:

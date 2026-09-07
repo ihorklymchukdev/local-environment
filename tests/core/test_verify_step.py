@@ -1,8 +1,8 @@
 import pytest
 import yaml
 
-from runtime.core.install import VerificationFailed, verify_step
-from runtime.core.provider import Completed
+from omelet.core.install import VerificationFailed, verify_step
+from omelet.core.provider import Completed
 
 
 class FakeProvider:
@@ -36,7 +36,7 @@ def test_verify_passes_on_200_and_tears_the_project_down(template):
         return 200
 
     verify_step(provider, template, "127-0-0-1.sslip.io", http_get=http_get)
-    assert seen == ["http://runtime-selftest.127-0-0-1.sslip.io:39080"], \
+    assert seen == ["http://omelet-selftest.127-0-0-1.sslip.io:39080"], \
         "the smoke test must use a reserved id, not the template's folder name"
     assert any("down" in argv for argv in provider.execs), \
         "the smoke-test project must not be left running"

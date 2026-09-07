@@ -2,7 +2,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-BOOTSTRAP = Path("runtime/guest/bootstrap.sh")
+BOOTSTRAP = Path("omelet/guest/bootstrap.sh")
 
 
 def test_bootstrap_is_valid_bash():
@@ -19,7 +19,7 @@ def test_bootstrap_pins_docker_official_repo_not_docker_io():
 
 def test_bootstrap_writes_version_marker():
     text = BOOTSTRAP.read_text()
-    assert "/opt/runtime/.bootstrapped" in text
+    assert "/opt/omelet/.bootstrapped" in text
 
 
 def test_bootstrap_guards_on_the_package_not_the_docker_binary():
@@ -48,7 +48,7 @@ def test_smoke_test_template_publishes_no_host_port():
     # with "failed to bind host port 0.0.0.0:8080/tcp: address already in use".
     import yaml
     compose = yaml.safe_load(
-        (Path("runtime/templates/nginx-hello/docker-compose.yml")).read_text())
+        (Path("omelet/templates/nginx-hello/docker-compose.yml")).read_text())
     for name, svc in compose["services"].items():
         assert not svc.get("ports"), f"{name} publishes a host port"
 

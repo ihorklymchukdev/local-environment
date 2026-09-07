@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A PoC CLI (`runtime`) that creates a managed Linux VM, installs Docker inside it, runs any
+A PoC CLI (`omelet`) that creates a managed Linux VM, installs Docker inside it, runs any
 `docker-compose` project in the guest, and hands back a working URL on the host.
 Windows/WSL2 is the primary platform; macOS/Lima exists for parity and is **unverified**
-(`runtime/providers/lima.py`, `runtime/providers/runtime.yaml` — both carry an UNVERIFIED banner).
+(`omelet/providers/lima.py`, `omelet/providers/omelet.yaml` — both carry an UNVERIFIED banner).
 
 `task.md` and `docs/superpowers/plans/2026-08-14-local-runtime-poc.md` hold the original blueprint
 and task plan; `.superpowers/sdd/` holds the per-task execution ledger.
@@ -35,29 +35,29 @@ into the two provider classes.
 
 ```
 host CLI (typer)  →  VmProvider.exec()  →  guest: dockerd + traefik + project containers
-                                                   /opt/runtime/projects/<id>/
+                                                   /opt/omelet/projects/<id>/
 host localhost:39080 ──────────────────────────→  traefik :39080 → routes by Host header
 ```
 
-### Hard invariant: no platform branching outside `runtime/providers/`
+### Hard invariant: no platform branching outside `omelet/providers/`
 
-`tests/test_no_platform_leak.py` greps every `runtime/**/*.py` outside `providers/` for
-`sys.platform`, `platform.system()`, `os.name` and fails on any hit. `runtime/providers/__init__.py`
+`tests/test_no_platform_leak.py` greps every `omelet/**/*.py` outside `providers/` for
+`sys.platform`, `platform.system()`, `os.name` and fails on any hit. `omelet/providers/__init__.py`
 is the single place the host platform is resolved (`get_provider()`, `default_install_dir()`).
 Do not add an `if windows` anywhere else — push the difference into a provider method.
 
 ### Layers
 
-- `runtime/core/provider.py` — the `VmProvider` Protocol plus `Completed` / `CheckResult` /
+- `omelet/core/provider.py` — the `VmProvider` Protocol plus `Completed` / `CheckResult` /
   `Diagnosis` value types. Providers are **duck-typed against the Protocol, not subclasses**.
-- `runtime/providers/` — `Wsl2Provider` (shells `wsl.exe`), `LimaProvider` (shells `limactl`).
+- `omelet/providers/` — `Wsl2Provider` (shells `wsl.exe`), `LimaProvider` (shells `limactl`).
   Both take an injectable `runner` callable (defaults to `subprocess.run(..., capture_output=True)`),
   which is what makes them unit-testable.
-- `runtime/core/` — all platform-free logic: compose parsing, web detection, Traefik overlay
+- `omelet/core/` — all platform-free logic: compose parsing, web detection, Traefik overlay
   generation, project identity, failure classification, guest lifecycle, sqlite state.
-- `runtime/guest/` — assets pushed into the VM: `bootstrap.sh` (docker-ce from the official repo,
+- `omelet/guest/` — assets pushed into the VM: `bootstrap.sh` (docker-ce from the official repo,
   `edge` network, Traefik container) and `traefik.yml`.
-- `runtime/api/server.py` — minimal JSON-RPC over `http.server` on 127.0.0.1:39099. `dispatch()` is
+- `omelet/api/server.py` — minimal JSON-RPC over `http.server` on 127.0.0.1:39099. `dispatch()` is
   pure and testable; `serve()` is the transport.
 
 ### Things that will bite you
@@ -65,14 +65,14 @@ Do not add an `if windows` anywhere else — push the difference into a provider
 - **Nothing is staged on the host.** `push_project` tars the local dir in memory, base64-encodes it,
   and pipes it through `bash -lc … base64 -d | tar -xzf -` in the guest. base64 is deliberate: it
   avoids quoting/newline mangling through `wsl -- bash -lc`. `bootstrap._push_file` does the same.
-- **The user's `docker-compose.yml` is never modified.** A generated `.runtime/overlay.yml` adds the
+- **The user's `docker-compose.yml` is never modified.** A generated `.omelet/overlay.yml` adds the
   Traefik labels and the external `edge` network, and compose is invoked with both `-f` files.
   `compose ps` is invoked with only the base file.
 - **`wsl.exe` output encoding is split**: meta commands (`-l`, `--version`, `--import`) emit UTF-16LE,
   command passthrough emits UTF-8. `decode_wsl()` sniffs NUL bytes to pick. Use `_meta()` for meta
   commands and `exec()` for passthrough — mixing them corrupts output.
-- **Bootstrap idempotency is a version marker**, `/opt/runtime/.bootstrapped` compared against
-  `constants.BOOTSTRAP_VERSION`. **Bump `BOOTSTRAP_VERSION` whenever `runtime/guest/bootstrap.sh`
+- **Bootstrap idempotency is a version marker**, `/opt/omelet/.bootstrapped` compared against
+  `constants.BOOTSTRAP_VERSION`. **Bump `BOOTSTRAP_VERSION` whenever `omelet/guest/bootstrap.sh`
   changes**, or existing VMs silently skip the new bootstrap.
 - **Guest failures must stay loud.** `provider.exec()` returns a `Completed` and never raises, so
   every caller has to check `.ok` itself. `bootstrap.py` routes its calls through `_run()`, which
@@ -87,7 +87,7 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   `project.load_project` / `overlay.host_for`.
 - **`classify()` tolerates both JSON-array and NDJSON `docker compose ps --format json` output** —
   the format differs across compose versions.
-- CLI command bodies use **function-local imports** deliberately (keeps `runtime --help` and the
+- CLI command bodies use **function-local imports** deliberately (keeps `omelet --help` and the
   smoke test fast, and avoids importing provider code on unsupported hosts). `cli._provider_factory`
   is a module attribute so tests can monkeypatch the provider.
 
@@ -105,6 +105,6 @@ Do not add an `if windows` anywhere else — push the difference into a provider
 
 - Python 3.12+, `from __future__ import annotations`, frozen dataclasses for value types.
 - Runtime deps are only `typer` and `pyyaml` — keep it that way unless there's a reason.
-- Live WSL2 run needs an Ubuntu 24.04 rootfs tarball path in `RUNTIME_ROOTFS` (README has the
-  current download URL); the provider factory reads it, and `runtime vm create` without it raises
+- Live WSL2 run needs an Ubuntu 24.04 rootfs tarball path in `OMELET_ROOTFS` (README has the
+  current download URL); the provider factory reads it, and `omelet vm create` without it raises
   `ValueError`. The value must be a Windows path — it goes straight to `wsl.exe --import`.
