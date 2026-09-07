@@ -336,3 +336,22 @@ def test_single_file_put_over_the_cap_is_413_and_leaves_no_temp_file(capped_env)
     assert resp.json()["error"]["code"] == "payload_too_large"
     assert _stray_temp_files(config) == []
     assert not (config.projects_root / "blog" / "big.bin").exists()
+
+
+def test_the_upload_cap_is_reported_in_a_size_a_person_can_read(tmp_path):
+    # "upload exceeds the 536870912 byte limit" is the raw constant read out
+    # loud; the people this tool is for do not count bytes.
+    token_path = tmp_path / "agent.token"
+    token_path.write_text("test-token")
+    config = AgentConfig(projects_root=tmp_path / "projects",
+                         state_db=tmp_path / "state.db", token_path=token_path,
+                         max_upload_bytes=1024 * 1024)
+    app = create_app(config=config)
+    with TestClient(app, headers={"Authorization": "Bearer test-token"}) as client:
+        _create(client)
+        message = client.post("/projects/blog/files",
+                              content=b"x" * (2 * 1024 * 1024)
+                              ).json()["error"]["message"]
+
+    assert "1 MB" in message
+    assert str(config.max_upload_bytes) not in message

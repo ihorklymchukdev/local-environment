@@ -102,7 +102,9 @@ def test_up_reports_the_guests_own_output_when_the_stack_does_not_stay_up(
     client = use(monkeypatch, FakeClient(fail={"wait_for_job": failure}))
     result = runner.invoke(cli.app, ["up", str(project_dir(tmp_path))])
     assert result.exit_code == 1
-    assert "crash_looping" in result.output
+    assert "did not stay running" in result.output, \
+        "a bare status code is not a sentence anyone can act on"
+    assert "crash_looping" in result.output, "support still needs the raw status"
     assert "bind: address in use" in result.output
     assert "omelet logs blog" in result.output
 

@@ -143,8 +143,12 @@ def up(directory: str = typer.Argument(".", help="Project directory with a docke
             job = client.wait_for_job(client.project_up(project_id))
         except JobFailedError as e:
             status = e.result.get("status", "failed")
-            typer.echo(f"Project status: {status}. "
-                       f"Run `omelet logs {project_id}`.", err=True)
+            # First line for the user, second for whoever they send it to: a
+            # bare `crash_looping` is not a sentence anyone can act on.
+            typer.echo(f"{project_id} started, but its containers did not stay "
+                       f"running. To see what they printed, run: "
+                       f"omelet logs {project_id}", err=True)
+            typer.echo(f"(status: {status})", err=True)
             if str(e):
                 typer.echo(str(e), err=True)
             raise typer.Exit(code=1)

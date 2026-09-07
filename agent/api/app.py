@@ -100,6 +100,13 @@ def _validation_message(exc: RequestValidationError) -> str:
     return f"{where}: {first.get('msg', 'invalid request body')}".lstrip(": ")
 
 
+def _size_words(byte_count: int) -> str:
+    """Megabytes for anything a real project could reach; bytes below that, so
+    a small cap never reads as "0 MB"."""
+    megabytes = byte_count / (1024 * 1024)
+    return f"{megabytes:.0f} MB" if megabytes >= 1 else f"{byte_count} bytes"
+
+
 def _read_token(path: Path) -> str:
     """Empty string for "missing", "unreadable", and "unparseable" alike --
     callers only need to know whether they have a credential to compare
@@ -146,7 +153,11 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
         # host client only needs a code it can act on.
         log.exception("unhandled error serving a request")
         return _body("internal_error",
-                     f"the agent failed with an unexpected {type(exc).__name__}", 500)
+                     "Something went wrong inside the Omelet service in the "
+                     "virtual machine. Try the same command again; if it keeps "
+                     "failing, run setup again.\n"
+                     f"(unexpected {type(exc).__name__}; the details are in the "
+                     "service's own log)", 500)
 
     # Read once at startup, not per request. The agent binds 0.0.0.0 inside
     # the VM (WSL2's localhostForwarding needs that), so every container in
@@ -340,8 +351,11 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
                     if written > config.max_upload_bytes:
                         raise ApiError(
                             "payload_too_large",
-                            f"upload exceeds the {config.max_upload_bytes} "
-                            "byte limit", 413)
+                            "This project is larger than the "
+                            f"{_size_words(config.max_upload_bytes)} an upload "
+                            "may be. Remove the large files or folders from it "
+                            "-- build output, videos and database files are the "
+                            "usual cause -- and try again.", 413)
                     f.write(chunk)
         except BaseException:
             # A client that disconnects mid-upload, or trips the size cap
