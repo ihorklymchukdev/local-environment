@@ -494,15 +494,32 @@ def test_a_stored_problem_survives_a_re_read_that_still_fails(env):
     assert body["problem"]["code"] == "bound_to_loopback"
 
 
-def test_the_project_listing_never_probes(env):
+def test_a_healthy_listing_probes_nothing(env):
     # One round trip per project would make `omelet status` slow in proportion
-    # to how much the tool is used.
+    # to how much the tool is used. A project with no stored problem has
+    # nothing to re-check, so it costs nothing.
     _create(env)
     _write_compose(env, "blog")
-    env.probe.status = 502
     _run_to_completion(env, env.client.post("/projects/blog/up"))
     env.probe.calls.clear()
 
     listed = env.client.get("/projects").json()["projects"]
-    assert listed[0]["problem"]["code"] == "bound_to_loopback"
+    assert listed[0]["problem"] is None
     assert env.probe.calls == []
+
+
+def test_a_stale_problem_clears_in_the_listing_too(env):
+    # `omelet status` calls the listing, never GET /projects/{id}: re-probing
+    # only there left the one surface users read stale forever.
+    _create(env)
+    _write_compose(env, "blog")
+    env.probe.status = 502
+    _run_to_completion(env, env.client.post("/projects/blog/up"))
+
+    listed = env.client.get("/projects").json()["projects"]
+    assert listed[0]["problem"]["code"] == "bound_to_loopback"
+
+    env.probe.status = 200
+    assert env.client.get("/projects").json()["projects"][0]["problem"] is None
+    assert env.state.get_project("blog")["problem_code"] is None, \
+        "the stale row must be cleared, not just hidden from one response"

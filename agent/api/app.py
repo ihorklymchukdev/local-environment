@@ -243,6 +243,8 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
             # the project has no URLs to be unreachable on.
             problem = {"code": row["problem_code"],
                        "message": row["problem_message"]}
+            # One request with a short timeout, never the readiness window:
+            # this runs inside a read the CLI is waiting on.
             if recheck and project is not None and answers(
                     project, row["domain"], edge_port=config.edge_port,
                     traefik_host=config.traefik_host, http_probe=http_probe):
@@ -305,12 +307,15 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
 
     @app.get("/projects")
     def list_projects() -> dict:
-        return {"projects": [payload(row) for row in state.list_projects()]}
+        # `omelet status` is the surface users actually read, so a stale
+        # diagnosis has to clear here too. payload() only probes a row that
+        # carries a stored problem -- normally none -- so an ordinary listing
+        # still pays no round trips at all.
+        return {"projects": [payload(row, recheck=True)
+                             for row in state.list_projects()]}
 
     @app.get("/projects/{project_id}")
     def get_project(project_id: str) -> dict:
-        # One re-probe, only here: the listing would pay a round trip per
-        # project, which is what makes `omelet status` slow as the tool is used.
         return payload(require_row(project_id), recheck=True)
 
     def resolve_path(project_id: str, rel_path: str) -> Path:
