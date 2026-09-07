@@ -83,6 +83,38 @@ def test_a_body_that_is_not_gzip_is_a_bad_archive(tmp_path):
         files.extract_archive(archive, dest)
 
 
+def test_a_non_escaping_dotdot_entry_is_accepted(tmp_path):
+    # `a/../b.txt` never leaves dest_dir - resolve_within (the PUT route's
+    # own check) already accepts this shape - but the raw name trips
+    # tarfile's own directory creation with a misleading FileExistsError
+    # unless it's normalised first. Over-rejection here is a real defect,
+    # not a safe default.
+    archive = tmp_path / "harmless.tar.gz"
+    archive.write_bytes(_tar_bytes(add_default_file=False, entries=[
+        (_entry("a/../b.txt", size=3), b"hi\n"),
+    ]))
+    dest = tmp_path / "project"
+    files.extract_archive(archive, dest)
+    assert (dest / "b.txt").read_bytes() == b"hi\n"
+    assert not (dest / "a").exists()
+
+
+def test_an_environment_failure_during_extraction_is_not_reported_as_a_bad_archive(
+        tmp_path, monkeypatch):
+    # A disk-full or permission failure while writing into dest_dir is not
+    # the caller's fault and must not be reported as "your archive is bad".
+    archive = tmp_path / "fine.tar.gz"
+    archive.write_bytes(_tar_bytes())
+    dest = tmp_path / "project"
+
+    def _boom(self, *a, **kw):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(tarfile.TarFile, "extractall", _boom)
+    with pytest.raises(OSError, match="No space left"):
+        files.extract_archive(archive, dest)
+
+
 def test_extraction_merges_and_leaves_untracked_files_alone(tmp_path):
     dest = tmp_path / "project"
     dest.mkdir()
@@ -135,8 +167,14 @@ def _create(client, pid="blog"):
     return resp
 
 
+def _stray_temp_files(config) -> list[str]:
+    """Anything besides project directories left directly under
+    projects_root - an orphaned `.upload` staging file, most likely."""
+    return [p.name for p in config.projects_root.iterdir() if p.suffix == ".upload"]
+
+
 def test_upload_route_rejects_a_traversal_archive(env):
-    client, _config = env
+    client, config = env
     _create(client)
     archive = _tar_bytes(add_default_file=False, entries=[
         (_entry("../../etc/passwd", size=4), b"pwn\n"),
@@ -145,15 +183,33 @@ def test_upload_route_rejects_a_traversal_archive(env):
                        headers={"Content-Type": "application/gzip"})
     assert resp.status_code == 400
     assert resp.json()["error"]["code"] == "path_traversal"
+    assert _stray_temp_files(config) == []
 
 
 def test_upload_route_rejects_a_non_gzip_body(env):
-    client, _config = env
+    client, config = env
     _create(client)
     resp = client.post("/projects/blog/files", content=b"not a tarball",
                        headers={"Content-Type": "application/gzip"})
     assert resp.status_code == 400
     assert resp.json()["error"]["code"] == "bad_archive"
+    assert _stray_temp_files(config) == []
+
+
+def test_a_client_disconnect_mid_upload_does_not_leak_a_temp_file(env):
+    # There is no size cap on this route by design, so an unremoved partial
+    # upload is an unbounded way to fill the VM's disk.
+    client, config = env
+    _create(client)
+
+    def dropped_connection():
+        yield b"x" * 1024
+        raise RuntimeError("client vanished")
+
+    raw = TestClient(client.app, raise_server_exceptions=False)
+    resp = raw.post("/projects/blog/files", content=dropped_connection())
+    assert resp.status_code == 500
+    assert _stray_temp_files(config) == []
 
 
 def test_upload_to_an_unknown_project_is_project_not_found(env):

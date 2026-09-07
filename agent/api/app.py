@@ -288,9 +288,16 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
         dir_.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(dir=dir_, suffix=".upload")
         path = Path(name)
-        with os.fdopen(fd, "wb") as f:
-            async for chunk in request.stream():
-                f.write(chunk)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                async for chunk in request.stream():
+                    f.write(chunk)
+        except BaseException:
+            # A client that disconnects mid-upload must not leave a temp
+            # file behind: there is no size cap on this route by design, so
+            # an unremoved partial upload is an unbounded disk leak.
+            path.unlink(missing_ok=True)
+            raise
         return path
 
     @app.post("/projects/{project_id}/files")

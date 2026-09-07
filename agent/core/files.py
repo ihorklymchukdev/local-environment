@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import posixpath
 import tarfile
 from pathlib import Path, PurePosixPath
 
@@ -23,28 +24,53 @@ def extract_archive(archive_path: Path, dest_dir: Path) -> None:
     `dest_dir` - a database's bind-mounted data directory, say - is left
     untouched. Never `rmtree` dest_dir first; deletion only ever happens
     through the explicit DELETE route.
+
+    Not atomic: an archive rejected partway through (a bad member after 100
+    good ones) leaves those 100 already written. Nothing escapes dest_dir
+    either way, and a staging-and-swap scheme is more than this PoC needs.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     try:
-        with tarfile.open(archive_path, mode="r:gz") as tar:
-            # tarfile's "data" filter is permissive with an absolute member
-            # name: it strips the leading "/" and keeps the now-relative
-            # entry, rather than refusing it. That is safe (the write still
-            # lands inside dest_dir) but not what this API promises its
-            # caller, so absolute names are rejected outright, before the
-            # filter gets a chance to be lenient about them.
-            for member in tar.getmembers():
-                if PurePosixPath(member.name).is_absolute():
-                    raise PathTraversalError(
-                        f"'{member.name}' is an absolute path")
+        tar = tarfile.open(archive_path, mode="r:gz")
+    except (tarfile.TarError, OSError, EOFError) as e:
+        raise BadArchiveError(str(e)) from e
+
+    with tar:
+        try:
+            members = tar.getmembers()
+        except (tarfile.TarError, OSError, EOFError) as e:
+            raise BadArchiveError(str(e)) from e
+
+        for member in members:
+            # A name like `a/../b.txt` doesn't escape dest_dir - resolve_within
+            # (used by the single-file routes) already accepts it - but left
+            # as-is it makes tarfile's own directory creation fail with a
+            # misleading FileExistsError on ".../a/..". Normalising first
+            # keeps both code paths agreeing on what's a legitimate name.
+            member.name = posixpath.normpath(member.name)
+            if PurePosixPath(member.name).is_absolute():
+                # tarfile's "data" filter is permissive here: it strips the
+                # leading "/" and keeps the now-relative entry rather than
+                # refusing it. That's safe (the write still lands inside
+                # dest_dir) but not what this API promises its caller, so
+                # absolute names are rejected outright, before the filter
+                # gets a chance to be lenient about them.
+                raise PathTraversalError(
+                    f"'{member.name}' is an absolute path")
+
+        try:
             # The filter handles everything else: `..` escapes, and symlinks
             # or hardlinks whose target resolves outside dest_dir. Hand-rolled
             # checks in this area have a long history of being subtly wrong.
             tar.extractall(dest_dir, filter="data")
-    except tarfile.FilterError as e:
-        raise PathTraversalError(str(e)) from e
-    except (tarfile.TarError, OSError, EOFError) as e:
-        raise BadArchiveError(str(e)) from e
+        except tarfile.FilterError as e:
+            raise PathTraversalError(str(e)) from e
+        except tarfile.TarError as e:
+            raise BadArchiveError(str(e)) from e
+        # A bare OSError here - disk full, permission denied while writing
+        # into dest_dir - is an environment failure, not a malformed
+        # archive, and is deliberately left to propagate rather than being
+        # reported to the caller as "your archive is bad".
 
 
 def resolve_within(root: Path, rel_path: str) -> Path:
