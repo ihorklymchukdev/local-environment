@@ -121,11 +121,13 @@ def _validation_message(exc: RequestValidationError) -> str:
 
 
 def _read_token(path: Path) -> str:
-    """Empty string for "missing" and "unreadable" alike -- callers only need
-    to know whether they have a credential to compare against."""
+    """Empty string for "missing", "unreadable", and "unparseable" alike --
+    callers only need to know whether they have a credential to compare
+    against, and this must fail closed on anything unexpected rather than
+    crash-loop the agent."""
     try:
         return path.read_text().strip()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return ""
 
 
@@ -181,7 +183,15 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
             return _body("agent_unconfigured",
                          "the agent has no token configured; run setup again", 503)
         scheme, _, supplied = request.headers.get("authorization", "").partition(" ")
-        if scheme.lower() != "bearer" or not secrets.compare_digest(supplied, token):
+        # Starlette decodes headers as latin-1, so a header value can carry
+        # bytes that are not valid ASCII; compare_digest raises TypeError on
+        # two `str` args if either has a non-ASCII character. Comparing the
+        # encoded bytes instead means every wire-valid header reaches a
+        # normal true/false answer, never an exception out of the one guard
+        # that must never throw.
+        match = (scheme.lower() == "bearer"
+                and secrets.compare_digest(supplied.encode(), token.encode()))
+        if not match:
             return _body("unauthorized", "missing or invalid bearer token", 401)
         return await call_next(request)
 

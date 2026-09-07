@@ -77,11 +77,17 @@ printf 'OMELET_DOCKER_GID=%s\n' "$DOCKER_GID" > /opt/omelet/.env
 # reading, and set -o pipefail then fails the whole script over a byte count
 # that was never wrong.
 if [[ ! -s /opt/omelet/agent.token ]]; then
+  # `install` sets the mode on creation, before any content lands in the
+  # file -- a plain `>` redirect creates it under root's umask (644) first
+  # and only narrows it on the next line, leaving it briefly world-readable.
+  install -m 640 /dev/null /opt/omelet/agent.token
   head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > /opt/omelet/agent.token
 fi
 # Root-owned but group-readable: the agent's own uid is non-root, and docker
 # group membership is already root-equivalent here (it owns the socket), so
 # it is the group a credential the agent itself must read has to grant.
+# Reasserted every run, not just on first creation, so a pre-existing file
+# from before this ever ran still ends up correct.
 chgrp docker /opt/omelet/agent.token
 chmod 640 /opt/omelet/agent.token
 

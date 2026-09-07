@@ -155,6 +155,26 @@ def test_bootstrap_reasserts_a_narrow_mode_on_the_token_after_writing_it():
     assert chmod < _index_of(" up -d")
 
 
+def test_bootstrap_creates_the_token_at_a_narrow_mode_from_the_start():
+    # A plain `>` redirect creates the file under root's umask (644) before
+    # any later chmod narrows it, leaving a window where it is
+    # world-readable. `install -m` sets the mode at creation instead.
+    commands = _commands()
+    create = _index_of(f"install -m 640 /dev/null {constants.GUEST_TOKEN}")
+    assert create > _index_of(f"[[ ! -s {constants.GUEST_TOKEN} ]]")
+    assert create < _index_of(f"head -c 32 /dev/urandom")
+
+
+def test_bootstrap_chgrps_the_token_to_docker():
+    # The other half of the 640/docker permission model: without this, the
+    # token's group stays whatever `install`/root's process defaults to,
+    # which the agent's own group membership may not be.
+    commands = _commands()
+    chgrp = _index_of(f"chgrp docker {constants.GUEST_TOKEN}")
+    assert chgrp < _index_of(" up -d")
+    assert chgrp < _index_of(f"chmod 640 {constants.GUEST_TOKEN}")
+
+
 def test_bootstrap_writes_this_vms_real_docker_gid_for_the_stack():
     # stack.yml's group_add defaults to 999 and the image bakes in 999, but the
     # chgrp above uses whatever GID this VM's docker group actually has. On a VM

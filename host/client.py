@@ -1,9 +1,9 @@
 """The pieces of the host/agent seam that exist purely for authentication.
 
-Task 9 builds the actual HTTP client (`urllib.request`, following
-`host/core/install.py::_default_http_get`) on top of this. This module is
-deliberately small: reading the shared token and shaping the header it goes
-in, nothing that talks HTTP.
+The full HTTP client (on `urllib.request`, following
+`host/core/install.py::_default_http_get`) is built on top of this
+separately. This module is deliberately small: reading the shared token and
+shaping the header it goes in, nothing that talks HTTP.
 """
 
 from __future__ import annotations
@@ -21,9 +21,9 @@ class AgentUnavailableError(RuntimeError):
 def read_token(provider: VmProvider) -> str:
     """Read `/opt/omelet/agent.token` fresh, once, via `provider.exec()`.
 
-    Never cached to the host filesystem (R-21): a copy at rest is a second
-    secret to protect and a second thing to go stale after a VM rebuild. One
-    `wsl.exe` round trip per CLI invocation is an acceptable price.
+    Never cached to the host filesystem: a copy at rest is a second secret to
+    protect and a second thing to go stale after a VM rebuild. One `wsl.exe`
+    round trip per CLI invocation is an acceptable price.
 
     Phase 3 replaces this shared, VM-wide token with a service-issued device
     token; this function is the one place that changes.
