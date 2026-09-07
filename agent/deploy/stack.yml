@@ -43,9 +43,14 @@ services:
     # sockets bound to all interfaces. That also means every other container
     # in the VM can reach an agent that holds the Docker socket -- Task 8
     # closes that gap with a shared token, not this file.
+    #
+    # Equal on both sides of the colon, and handed to the process as well: the
+    # host dials 127.0.0.1:<same port> through the VM's forward, and a mapping
+    # the agent does not bind forwards to nothing.
     ports:
-      - "39099:39099"
+      - "${OMELET_AGENT_PORT:-39099}:${OMELET_AGENT_PORT:-39099}"
     environment:
+      - OMELET_AGENT_PORT=${OMELET_AGENT_PORT:-39099}
       - OMELET_DOMAIN=${OMELET_DOMAIN:-127-0-0-1.sslip.io}
       - OMELET_EDGE_PORT=${OMELET_EDGE_PORT:-39080}
     volumes:

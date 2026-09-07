@@ -27,11 +27,11 @@ VERIFY_PROJECT_ID = "omelet-selftest"
 BOOTSTRAP_VERSION = 5
 BOOTSTRAP_MARKER = f"{GUEST_ROOT}/.bootstrapped"
 
-# Where the pushed copy of agent/deploy/stack.yml lands, and the file compose
-# reads its interpolation values from -- compose looks for `.env` beside the
-# compose file, which is why both live directly under GUEST_ROOT.
+# Where the pushed copy of agent/deploy/stack.yml lands. Compose reads its
+# interpolation values from a `.env` beside the compose file, which is why
+# bootstrap.sh writes one directly under GUEST_ROOT too; no host code opens
+# that file, so it has no constant here.
 GUEST_STACK = f"{GUEST_ROOT}/stack.yml"
-GUEST_ENV = f"{GUEST_ROOT}/.env"
 
 # Generated in the guest by bootstrap.sh, never pushed from the host. The host
 # reads it fresh per client via provider.exec(root=True) rather than caching a

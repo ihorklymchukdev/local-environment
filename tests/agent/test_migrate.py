@@ -14,12 +14,6 @@ CREATE TABLE projects (
     domain TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'stopped'
 );
-CREATE TABLE forwards (
-    project_id TEXT NOT NULL,
-    service TEXT NOT NULL,
-    guest_port INTEGER NOT NULL,
-    host_port INTEGER NOT NULL UNIQUE
-);
 """
 
 
@@ -40,7 +34,7 @@ def test_an_empty_database_is_brought_to_the_current_schema(tmp_path):
     conn = connect(tmp_path)
     assert migrate.migrate(conn) == migrate.SCHEMA_VERSION
 
-    assert {"projects", "forwards", "schema_version"} <= tables(conn)
+    assert {"projects", "schema_version"} <= tables(conn)
     assert {"problem_code", "problem_message"} <= columns(conn, "projects")
 
 

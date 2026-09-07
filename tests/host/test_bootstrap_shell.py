@@ -187,7 +187,7 @@ def test_bootstrap_writes_this_vms_real_docker_gid_for_the_stack():
     # where they differ the agent can write neither /opt/omelet nor the socket
     # -- the same crash-loop the chgrp exists to prevent, one step over.
     commands = _commands()
-    env_line = _index_of(constants.GUEST_ENV)
+    env_line = _index_of(f"{constants.GUEST_ROOT}/.env")
     assert env_line < _index_of(" up -d"), "compose reads .env when it starts"
     assert any("OMELET_DOCKER_GID" in l for l in commands)
     assert any("getent group docker" in l for l in commands), \

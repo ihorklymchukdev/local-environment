@@ -61,6 +61,6 @@ EXPOSE 39099
 # answer even when the Docker socket is unreachable, so a failing healthcheck
 # means the agent process itself is down, not that a project failed to start.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:39099/health', timeout=3)"
+    CMD python -c "import os, urllib.request as u; u.urlopen('http://127.0.0.1:%s/health' % os.environ.get('OMELET_AGENT_PORT', '39099'), timeout=3)"
 
 CMD ["python", "-m", "agent.api"]

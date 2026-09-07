@@ -23,11 +23,22 @@ def _without_interpolation() -> str:
 
 def test_stack_yml_hardcodes_no_domain_or_port_outside_a_default():
     # This is the one rule that keeps Phase 5 from becoming a rewrite: every
-    # environment injects its own domain and edge port through OMELET_DOMAIN
-    # / OMELET_EDGE_PORT, so nothing here may assume the local values.
+    # environment injects its own domain and ports through OMELET_DOMAIN /
+    # OMELET_EDGE_PORT / OMELET_AGENT_PORT, so nothing here may assume the
+    # local values.
     stripped = _without_interpolation()
     assert "39080" not in stripped
+    assert "39099" not in stripped
     assert "127-0-0-1.sslip.io" not in stripped
+
+
+def test_the_agent_binds_the_port_it_is_published_on():
+    # AgentConfig already reads OMELET_AGENT_PORT; publishing a fixed port
+    # while the process binds a configured one forwards the host to nothing.
+    agent = yaml.safe_load(_text())["services"]["agent"]
+    assert agent["ports"] == ["${OMELET_AGENT_PORT:-39099}:"
+                              "${OMELET_AGENT_PORT:-39099}"]
+    assert "OMELET_AGENT_PORT=${OMELET_AGENT_PORT:-39099}" in agent["environment"]
 
 
 def test_stack_yml_parses_and_has_no_version_key():

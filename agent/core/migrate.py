@@ -26,7 +26,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column: str, decl: str) ->
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
-def _v1_projects_and_forwards(conn: sqlite3.Connection) -> None:
+def _v1_projects(conn: sqlite3.Connection) -> None:
     # One statement per execute(), not executescript(): that commits any open
     # transaction first, which would break the one migrate() holds.
     conn.execute("""
@@ -35,13 +35,6 @@ def _v1_projects_and_forwards(conn: sqlite3.Connection) -> None:
             guest_path TEXT NOT NULL,
             domain TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'stopped'
-        )""")
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS forwards (
-            project_id TEXT NOT NULL,
-            service TEXT NOT NULL,
-            guest_port INTEGER NOT NULL,
-            host_port INTEGER NOT NULL UNIQUE
         )""")
 
 
@@ -53,7 +46,7 @@ def _v2_project_problem(conn: sqlite3.Connection) -> None:
 # Append only. Editing an entry that has already shipped changes nothing on a
 # database that ran it -- add the next one instead.
 MIGRATIONS = [
-    _v1_projects_and_forwards,
+    _v1_projects,
     _v2_project_problem,
 ]
 SCHEMA_VERSION = len(MIGRATIONS)

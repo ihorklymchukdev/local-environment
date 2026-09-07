@@ -60,25 +60,8 @@ class State:
 
     def remove_project(self, id):
         with self._lock:
-            self._conn.execute("DELETE FROM forwards WHERE project_id=?", (id,))
             self._conn.execute("DELETE FROM projects WHERE id=?", (id,))
             self._conn.commit()
-
-    def add_forward(self, project_id, service, guest_port, host_port):
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO forwards(project_id, service, guest_port, host_port) "
-                "VALUES (?,?,?,?)", (project_id, service, guest_port, host_port))
-            self._conn.commit()
-
-    def allocate_host_port(self, start=39100, end=39200) -> int:
-        with self._lock:
-            used = {r["host_port"] for r in
-                    self._conn.execute("SELECT host_port FROM forwards")}
-        for port in range(start, end + 1):
-            if port not in used:
-                return port
-        raise RuntimeError(f"no free host port in range {start}-{end}")
 
     def close(self):
         with self._lock:
