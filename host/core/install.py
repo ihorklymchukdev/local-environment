@@ -157,28 +157,56 @@ def _await_http_ok(url: str, http_get, timeout: float, sleep) -> None:
         sleep(0.5)
 
 
-def verify_step(provider, template_dir: Path, domain: str, *,
+def verify_step(provider, template_dir: Path, domain: str, *, client=None,
                 http_get=_default_http_get, ready_timeout: float = READY_TIMEOUT,
                 sleep=time.sleep) -> None:
-    """Run the bundled template end to end and require HTTP 200."""
-    import yaml
+    """Run the bundled template through the agent and require HTTP 200.
 
-    from agent.core.constants import VERIFY_PROJECT_ID
-    from agent.core.lifecycle import compose_down, compose_up, push_project
-    from agent.core.project import STARTED_OK, load_project
+    The gate is the response the user's browser would get, not the job's own
+    verdict: a container can run happily while its URL answers a proxy error.
+    """
+    from host.client import AgentClient, JobFailedError
+    from host.core.constants import VERIFY_PROJECT_ID
 
-    compose = yaml.safe_load((template_dir / "docker-compose.yml").read_text()) or {}
-    project = load_project(compose, {"id": VERIFY_PROJECT_ID}, template_dir.name)
+    client = client or AgentClient.for_provider(provider)
     try:
-        push_project(provider, project.id, template_dir)
-        status, urls, detail = compose_up(provider, project, template_dir, domain)
-        if status != STARTED_OK:
+        client.ensure_project(VERIFY_PROJECT_ID, domain=domain)
+        client.upload_directory(VERIFY_PROJECT_ID, template_dir)
+        try:
+            result = client.wait_for_job(
+                client.project_up(VERIFY_PROJECT_ID)).get("result") or {}
+        except JobFailedError as e:
+            status = e.result.get("status", "failed")
             raise VerificationFailed(
                 f"smoke-test project status: {status}"
-                + (f"\n{detail}" if detail else ""))
+                + (f"\n{e}" if str(e) else "")) from e
+        problem = result.get("problem")
+        if problem:
+            # The containers started, but the agent already probed the URL
+            # through Traefik and knows why it will not answer. Waiting out
+            # the readiness window to report "did not respond" would replace
+            # that explanation with a symptom.
+            raise VerificationFailed(problem["message"])
+        urls = result.get("urls") or []
+        if not urls:
+            raise VerificationFailed(
+                "the smoke-test project exposed no HTTP address")
         _await_http_ok(urls[0], http_get, ready_timeout, sleep)
     finally:
-        compose_down(provider, project.id)
+        _teardown(client)
+
+
+def _teardown(client) -> None:
+    """Remove the smoke-test project, containers and state row alike, so a
+    failed verify leaves nothing running and `omelet status` stays clean.
+
+    Swallows its own failure on purpose: this runs in a `finally`, and a
+    teardown error must never replace the reason verification failed."""
+    from host.core.constants import VERIFY_PROJECT_ID
+    try:
+        client.delete_project(VERIFY_PROJECT_ID)
+    except Exception:
+        pass
 
 
 def finish_step(install_dir) -> str:

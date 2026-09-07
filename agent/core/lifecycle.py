@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import base64
-import io
-import tarfile
-from pathlib import Path
 
 from . import constants
 
@@ -23,19 +20,6 @@ def _compose_argv(project_id: str) -> list[str]:
             "-f", f"{d}/docker-compose.yml",
             "-f", f"{d}/.omelet/overlay.yml",
             "up", "-d"]
-
-
-def push_project(provider, project_id: str, local_dir) -> None:
-    """Tar the local project and unpack it inside the guest (never on host)."""
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for item in Path(local_dir).iterdir():
-            tar.add(item, arcname=item.name)
-    encoded = base64.b64encode(buf.getvalue()).decode("ascii")
-    d = _guest_dir(project_id)
-    provider.exec(["bash", "-lc",
-                   f"mkdir -p {d} && echo {encoded} | base64 -d | "
-                   f"tar -xzf - -C {d}"], root=True)
 
 
 def _write_overlay(provider, project: Project, domain: str):
