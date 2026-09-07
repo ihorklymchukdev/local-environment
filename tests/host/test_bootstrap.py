@@ -1,23 +1,8 @@
 import pytest
 
-import host.core.bootstrap as bs
 from host.core.bootstrap import bootstrap, read_marker, BootstrapError
 from host.core.provider import Completed
-from agent.core import constants
-
-
-@pytest.fixture(autouse=True)
-def _stub_assets(tmp_path, monkeypatch):
-    # host/provision/traefik.yml was deleted in Task 6 (Traefik's config
-    # moved onto agent/deploy/stack.yml's `command:` list); host/core/bootstrap.py
-    # still pushes it until Task 7 rewires the bootstrap around stack.yml.
-    # Point _ASSETS at a stand-in so these tests exercise the push logic
-    # without depending on that now-absent file.
-    assets = tmp_path / "provision"
-    assets.mkdir()
-    (assets / "bootstrap.sh").write_text("#!/usr/bin/env bash\nset -euo pipefail\n")
-    (assets / "traefik.yml").write_text("entryPoints:\n  web:\n")
-    monkeypatch.setattr(bs, "_ASSETS", assets)
+from host.core import constants
 
 
 class FakeProvider:
@@ -56,6 +41,26 @@ def test_bootstrap_skips_when_marker_current():
     bootstrap(p)
     # only the marker read happened; the script was never run as root
     assert all("bootstrap.sh" not in " ".join(a) for a, _ in p.execs)
+
+
+def test_every_asset_the_bootstrap_pushes_exists_on_disk():
+    # The push list is read at run time, not import time, so a file deleted from
+    # the repo surfaces as FileNotFoundError minutes into a user's install --
+    # which is precisely how a stale traefik.yml push shipped once.
+    from host.core.bootstrap import guest_assets
+    for local, _remote in guest_assets():
+        assert local.is_file(), f"bootstrap pushes a file that does not exist: {local}"
+
+
+def test_bootstrap_pushes_the_stack_file_the_guest_script_brings_up():
+    # bootstrap.sh runs `docker compose -f /opt/omelet/stack.yml up -d` and
+    # aborts if the file is absent, so the two paths have to agree.
+    p = FakeProvider(marker_value="")
+    bootstrap(p)
+    pushes = [" ".join(a) for a, _ in p.execs if "base64 -d" in " ".join(a)]
+    assert any(w.rstrip().endswith(constants.GUEST_STACK) for w in pushes), \
+        f"nothing was pushed to {constants.GUEST_STACK}"
+    assert "services:" in _pushed_payload(p, constants.GUEST_STACK).decode()
 
 
 def test_bootstrap_runs_script_as_root_when_absent():
@@ -119,8 +124,9 @@ def test_push_file_strips_crlf_so_bash_can_read_the_script(tmp_path, monkeypatch
     crlf_assets = tmp_path / "guest"
     crlf_assets.mkdir()
     (crlf_assets / "bootstrap.sh").write_bytes(b"#!/usr/bin/env bash\r\nset -euo pipefail\r\n")
-    (crlf_assets / "traefik.yml").write_bytes(b"entryPoints:\r\n  web:\r\n")
+    (crlf_assets / "stack.yml").write_bytes(b"services:\r\n  agent:\r\n")
     monkeypatch.setattr(bs, "_ASSETS", crlf_assets)
+    monkeypatch.setattr(bs, "_DEPLOY", crlf_assets)
 
     p = FakeProvider(marker_value="")
     bootstrap(p)
@@ -128,4 +134,4 @@ def test_push_file_strips_crlf_so_bash_can_read_the_script(tmp_path, monkeypatch
     script = _pushed_payload(p, "/opt/omelet/bin/bootstrap.sh")
     assert b"\r" not in script, "CRLF reached the Linux guest"
     assert script.splitlines()[1] == b"set -euo pipefail"
-    assert b"\r" not in _pushed_payload(p, "/opt/omelet/bin/traefik.yml")
+    assert b"\r" not in _pushed_payload(p, constants.GUEST_STACK)

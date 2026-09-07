@@ -1,18 +1,37 @@
 from __future__ import annotations
 
 import base64
+import posixpath
 from pathlib import Path
 
-from agent.core import constants
+from host.core import constants
 
 _GUEST_DIR = "/opt/omelet/bin"
 _GUEST_SCRIPT = f"{_GUEST_DIR}/bootstrap.sh"
-_GUEST_TRAEFIK = f"{_GUEST_DIR}/traefik.yml"
-_ASSETS = Path(__file__).resolve().parent.parent / "provision"
+# Repo root from source, sys._MEIPASS from a frozen build -- both layouts put
+# the bundled assets under the same host/ and agent/ prefixes.
+_ROOT = Path(__file__).resolve().parent.parent.parent
+_ASSETS = _ROOT / "host" / "provision"
+# stack.yml is referenced by path, not imported: it is the agent's deployment
+# manifest and duplicating it under host/ would guarantee drift.
+_DEPLOY = _ROOT / "agent" / "deploy"
 
 
 class BootstrapError(RuntimeError):
     """A command run inside the guest failed; carries the guest's own output."""
+
+
+def guest_assets() -> tuple[tuple[Path, str], ...]:
+    """Every file pushed into the VM, paired with the guest path it lands at.
+
+    Read at call time so tests can repoint the source directories, and exposed
+    so `cli.selfcheck` verifies exactly this list -- a push whose source file no
+    longer exists otherwise only surfaces minutes into a real install.
+    """
+    return (
+        (_ASSETS / "bootstrap.sh", _GUEST_SCRIPT),
+        (_DEPLOY / "stack.yml", constants.GUEST_STACK),
+    )
 
 
 def _run(provider, argv, *, step: str):
@@ -43,7 +62,7 @@ def _push_file(provider, local: Path, remote: str) -> None:
     payload = local.read_bytes().replace(b"\r\n", b"\n")
     encoded = base64.b64encode(payload).decode("ascii")
     _run(provider,
-         ["bash", "-lc", f"mkdir -p {_GUEST_DIR} && "
+         ["bash", "-lc", f"mkdir -p {posixpath.dirname(remote)} && "
                          f"echo {encoded} | base64 -d > {remote}"],
          step=f"copying {local.name} to the VM")
 
@@ -51,10 +70,10 @@ def _push_file(provider, local: Path, remote: str) -> None:
 def bootstrap(provider, *, force: bool = False) -> None:
     if not force and read_marker(provider) == constants.BOOTSTRAP_VERSION:
         return
-    _push_file(provider, _ASSETS / "bootstrap.sh", _GUEST_SCRIPT)
-    _push_file(provider, _ASSETS / "traefik.yml", _GUEST_TRAEFIK)
+    for local, remote in guest_assets():
+        _push_file(provider, local, remote)
     _run(provider, ["bash", _GUEST_SCRIPT, str(constants.BOOTSTRAP_VERSION)],
-         step="guest bootstrap (Docker + Traefik install)")
+         step="guest bootstrap (Docker + agent stack)")
     # The script writes the marker last, so a missing one means it exited
     # early without a non-zero status we could see.
     if read_marker(provider) != constants.BOOTSTRAP_VERSION:

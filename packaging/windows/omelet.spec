@@ -6,7 +6,7 @@ a = Analysis(
     pathex=["../.."],
     datas=[
         ("../../host/provision/bootstrap.sh", "host/provision"),
-        ("../../host/provision/traefik.yml", "host/provision"),
+        ("../../agent/deploy/stack.yml", "agent/deploy"),
         ("../../agent/templates/nginx-hello/docker-compose.yml",
          "agent/templates/nginx-hello"),
         ("../../host/providers/omelet.yaml", "host/providers"),

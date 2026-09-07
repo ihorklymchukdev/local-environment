@@ -56,8 +56,10 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   which is what makes them unit-testable.
 - `agent/core/` — all platform-free logic: compose parsing, web detection, Traefik overlay
   generation, project identity, failure classification, guest lifecycle, sqlite state.
-- `host/provision/` — assets pushed into the VM: `bootstrap.sh` (docker-ce from the official repo,
-  `edge` network, Traefik container) and `traefik.yml`.
+- `host/provision/` — `bootstrap.sh`, the only host-side asset pushed into the VM alongside
+  `agent/deploy/stack.yml`: docker-ce from the official repo, the `edge` network, `/opt/omelet`
+  made group-writable, then `docker compose -f /opt/omelet/stack.yml pull && up -d`. The list of
+  pushed files is `host/core/bootstrap.guest_assets()`, which `cli.selfcheck` also reads.
 - `agent/api/` — the FastAPI app the host talks to. `app.py::create_app(config, runner, state)` is
   a factory on purpose (no module-level `app`, so importing it opens no sqlite file); `jobs.py` is
   the in-process job registry that keeps slow compose work off the request; `__main__.py` is the
@@ -86,8 +88,15 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   command passthrough emits UTF-8. `decode_wsl()` sniffs NUL bytes to pick. Use `_meta()` for meta
   commands and `exec()` for passthrough — mixing them corrupts output.
 - **Bootstrap idempotency is a version marker**, `/opt/omelet/.bootstrapped` compared against
-  `constants.BOOTSTRAP_VERSION`. **Bump `BOOTSTRAP_VERSION` whenever `host/provision/bootstrap.sh`
-  changes**, or existing VMs silently skip the new bootstrap.
+  `host.core.constants.BOOTSTRAP_VERSION`. **Bump `BOOTSTRAP_VERSION` whenever
+  `host/provision/bootstrap.sh` changes**, or existing VMs silently skip the new bootstrap.
+- **The host and the agent each own a `constants.py`**, because nothing under `host/` may import
+  `agent/`. `tests/test_constants_agree.py` holds every name declared in both modules equal — add
+  a shared constant to one and it must go into the other with the same value.
+- **The agent container runs as a non-root user** whose only shared credential with the VM is the
+  `docker` group (`stack.yml`'s `group_add`). `bootstrap.sh` therefore `chgrp`s `/opt/omelet` to
+  `docker` and sets setgid on its directories *before* `compose up`; skip that and the agent
+  cannot open `/opt/omelet/state.db` and `restart: always` crash-loops it.
 - **Guest failures must stay loud.** `provider.exec()` returns a `Completed` and never raises, so
   every caller has to check `.ok` itself. `bootstrap.py` routes its calls through `_run()`, which
   raises `BootstrapError` carrying the guest's stderr, and re-reads the marker afterwards to catch a

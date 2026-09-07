@@ -256,15 +256,15 @@ def selfcheck():
     is caught by running the exe, not discovered by a user mid-setup.
     """
     from pathlib import Path
-    from host.core.bootstrap import _ASSETS
+    from host.core.bootstrap import guest_assets
     from host.core.install import VERIFY_TEMPLATE
     import host.providers as _providers
 
-    checks = [
-        ("host/provision/bootstrap.sh", _ASSETS / "bootstrap.sh"),
-        # traefik.yml is gone (Task 6): Traefik's config moved onto
-        # agent/deploy/stack.yml's `command:` list. Task 7 adds a check here
-        # for however stack.yml itself reaches the VM.
+    # Derived from the push list rather than restated, so an asset can never be
+    # added or dropped without this check following it -- that gap is how a
+    # deleted traefik.yml stayed in the bundle with nothing failing.
+    checks = [("/".join(local.parts[-3:]), local) for local, _remote in guest_assets()]
+    checks += [
         ("agent/templates/nginx-hello/docker-compose.yml",
          VERIFY_TEMPLATE / "docker-compose.yml"),
         ("host/providers/omelet.yaml", Path(_providers.__file__).parent / "omelet.yaml"),

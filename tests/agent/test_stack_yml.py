@@ -56,3 +56,15 @@ def test_stack_yml_pins_exact_image_tags():
     doc = yaml.safe_load(_text())
     assert ":latest" not in doc["services"]["traefik"]["image"]
     assert ":latest" not in _text()
+
+
+def test_bootstrap_pins_a_traefik_that_docker_still_talks_to():
+    # Traefik <= 3.5 asks the daemon for Docker API 1.24. docker-ce 29 raised
+    # MinAPIVersion to 1.40 and rejects it, so the docker provider loads no
+    # containers at all and every request answers 404 — with the routing layer
+    # looking healthy. 3.6 is the first release that negotiates.
+    import re
+    match = re.search(r"traefik:v(\d+)\.(\d+)", _text())
+    assert match, "stack.yml must pin an explicit traefik version"
+    assert (int(match[1]), int(match[2])) >= (3, 6), \
+        f"traefik:v{match[1]}.{match[2]} requests Docker API 1.24, which docker-ce 29 refuses"

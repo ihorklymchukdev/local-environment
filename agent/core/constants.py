@@ -1,9 +1,7 @@
 EDGE_PORT = 39080
 AGENT_PORT = 39099
-BOOTSTRAP_VERSION = 3
 GUEST_ROOT = "/opt/omelet"
 GUEST_PROJECTS = "/opt/omelet/projects"
-BOOTSTRAP_MARKER = "/opt/omelet/.bootstrapped"
 EDGE_NETWORK = "edge"
 DEFAULT_DOMAIN = "127-0-0-1.sslip.io"
 # Reserved for the setup smoke test. Deriving it from the template directory

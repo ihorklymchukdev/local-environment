@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# One-time OS-level provisioning only. Everything above the OS -- Traefik, the
+# agent, their versions -- lives in stack.yml and is updated by re-running this.
 set -euo pipefail
 
 MARKER=/opt/omelet/.bootstrapped
@@ -40,22 +42,30 @@ systemctl enable --now docker
 # 3. edge network (idempotent)
 /usr/bin/docker network inspect edge >/dev/null 2>&1 || /usr/bin/docker network create edge
 
-# 4. project root
+# 4. project root, group-writable before anything starts.
+# The agent container runs as a non-root user, and its only shared credential
+# with this VM is the docker group it joins via stack.yml's group_add -- so the
+# group, not an image-specific uid the host would have to keep in sync, is what
+# /opt/omelet opens up to. Anything in the docker group is already root-
+# equivalent here, so this grants no access it did not have. setgid makes the
+# project directories the agent creates later inherit the group; without it the
+# agent cannot even open /opt/omelet/state.db and restart:always loops it.
 mkdir -p /opt/omelet/projects
+chgrp -R docker /opt/omelet
+chmod -R g+rwX /opt/omelet
+find /opt/omelet -type d -exec chmod g+s {} +
 
-# 5. traefik as a container, single entrypoint on :39080
-# v3.6 or newer is required: earlier releases ask the daemon for Docker API
-# 1.24, which docker-ce 29 refuses, leaving the docker provider empty and
-# every route answering 404.
-mkdir -p /opt/omelet/traefik
-cp "$(dirname "$0")/traefik.yml" /opt/omelet/traefik/traefik.yml 2>/dev/null || true
-/usr/bin/docker rm -f traefik >/dev/null 2>&1 || true
-/usr/bin/docker run -d --name traefik --restart=always --network edge \
-  -p 39080:39080 \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v /opt/omelet/traefik/traefik.yml:/etc/traefik/traefik.yml:ro \
-  traefik:v3.7
+# 5. traefik + the agent, as one compose stack.
+# Always pull: this is how an agent update reaches an already-provisioned VM,
+# so both the first install and every update need the network.
+test -f /opt/omelet/stack.yml || { echo 'stack.yml was never pushed to the VM' >&2; exit 1; }
+if ! /usr/bin/docker compose -f /opt/omelet/stack.yml pull; then
+  echo "could not pull the Omelet images: the registry was unreachable." >&2
+  echo "Check the network connection or proxy and run setup again." >&2
+  exit 1
+fi
+/usr/bin/docker compose -f /opt/omelet/stack.yml up -d
 
-# 6. marker
+# 6. marker, last: a failure above must leave no marker behind.
 echo "$WANT_VERSION" > /opt/omelet/.bootstrapped
 echo "bootstrap complete at version $WANT_VERSION"

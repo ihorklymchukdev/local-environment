@@ -153,13 +153,10 @@ def test_uninstall_purge_succeeds_and_clears_state(monkeypatch):
     assert state.completed() == set()
 
 
-def test_selfcheck_reports_ok_for_all_three_bundled_assets():
-    # traefik.yml dropped out of the bundle in Task 6: Traefik's config moved
-    # onto agent/deploy/stack.yml's `command:` list, and nothing pushes that
-    # file to the VM yet (Task 7).
+def test_selfcheck_reports_ok_for_every_bundled_asset():
     result = runner.invoke(cli.app, ["selfcheck"])
     assert result.exit_code == 0
-    for name in ("bootstrap.sh", "docker-compose.yml", "omelet.yaml"):
+    for name in ("bootstrap.sh", "stack.yml", "docker-compose.yml", "omelet.yaml"):
         assert name in result.stdout
     assert "MISSING" not in result.stdout
 
@@ -193,3 +190,23 @@ def test_cli_never_resolves_bundled_assets_from_its_own_file():
     src = Path("host/cli.py").read_text()
     assert "Path(__file__)" not in src, \
         "resolve bundled assets from an imported module, not from cli.py"
+
+
+def test_packaging_spec_bundles_exactly_the_assets_selfcheck_verifies():
+    # selfcheck's whole job is catching a bad PyInstaller `datas` entry by
+    # running the exe. That only works while the two lists agree: when
+    # traefik.yml was deleted, the spec kept bundling a file that no longer
+    # existed and selfcheck had quietly lost its entry, so nothing failed.
+    import re
+    from pathlib import Path
+
+    spec = Path("packaging/windows/omelet.spec").read_text()
+    datas = re.search(r"datas=\[(.*?)\n    \]", spec, re.DOTALL)
+    assert datas, "could not find the datas block in the spec"
+    bundled = set(re.findall(r'"\.\./\.\./([^"]+)"', datas[1]))
+
+    result = runner.invoke(cli.app, ["selfcheck"])
+    checked = set(re.findall(r"^\S+\s+(\S+) ->", result.stdout, re.MULTILINE))
+
+    assert bundled == checked, \
+        f"only bundled: {bundled - checked}; only selfchecked: {checked - bundled}"
