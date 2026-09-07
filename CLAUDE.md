@@ -141,8 +141,10 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   `omelet-selftest` (never derived from the template's folder name, or a re-run could tear down a
   user project), polls the URL for `READY_TIMEOUT` seconds because Traefik publishes a router a beat
   after the container starts, and deletes the project in a `finally`. `agent_version_step` runs
-  just before it, so an agent older than `constants.EXPECTED_AGENT_VERSION` (the tag in
-  `AGENT_IMAGE`) is one sentence rather than a 404 minutes later.
+  just before it: an agent older than `constants.EXPECTED_AGENT_VERSION` (the tag in
+  `AGENT_IMAGE`) is re-provisioned once with `bootstrap(force=True)` — the guest marker that
+  normally skips bootstrap is exactly what leaves an upgraded host talking to an old agent —
+  and only then reported, in one sentence rather than as a 404 minutes later.
 - CLI command bodies use **function-local imports** deliberately (keeps `omelet --help` and the
   smoke test fast, and avoids importing provider code on unsupported hosts). `cli._provider_factory`
   is a module attribute so tests can monkeypatch the provider.
