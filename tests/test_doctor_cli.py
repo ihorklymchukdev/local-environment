@@ -1,5 +1,5 @@
-from omelet.core.diagnose import render_diagnosis
-from omelet.core.provider import Diagnosis, CheckResult
+from host.core.diagnose import render_diagnosis
+from host.core.provider import Diagnosis, CheckResult
 
 
 def test_render_marks_pass_and_fail_with_fix():

@@ -1,6 +1,6 @@
 from typer.testing import CliRunner
-import omelet.cli as cli
-from omelet.core.provider import Completed
+import host.cli as cli
+from host.core.provider import Completed
 
 runner = CliRunner()
 
@@ -19,7 +19,7 @@ class FakeProvider:
     def exec(self, argv, *, root=False):
         self.execs.append(argv)
         # make the marker read report "already current" so bootstrap is a no-op
-        from omelet.core import constants
+        from agent.core import constants
         if "cat" in argv:
             return Completed(0, str(constants.BOOTSTRAP_VERSION), "")
         return Completed(0, "", "")

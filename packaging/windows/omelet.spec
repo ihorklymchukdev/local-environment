@@ -2,16 +2,16 @@
 # the mode antivirus heuristics dislike most; the installer wraps this anyway.
 
 a = Analysis(
-    ["../../omelet/cli.py"],
+    ["../../host/cli.py"],
     pathex=["../.."],
     datas=[
-        ("../../omelet/guest/bootstrap.sh", "omelet/guest"),
-        ("../../omelet/guest/traefik.yml", "omelet/guest"),
-        ("../../omelet/templates/nginx-hello/docker-compose.yml",
-         "omelet/templates/nginx-hello"),
-        ("../../omelet/providers/omelet.yaml", "omelet/providers"),
+        ("../../host/provision/bootstrap.sh", "host/provision"),
+        ("../../host/provision/traefik.yml", "host/provision"),
+        ("../../agent/templates/nginx-hello/docker-compose.yml",
+         "agent/templates/nginx-hello"),
+        ("../../host/providers/omelet.yaml", "host/providers"),
     ],
-    hiddenimports=["omelet.setup_app.app"],
+    hiddenimports=["host.setup_app.app"],
 )
 pyz = PYZ(a.pure)
 

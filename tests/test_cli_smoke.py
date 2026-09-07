@@ -1,5 +1,5 @@
 from typer.testing import CliRunner
-from omelet.cli import app
+from host.cli import app
 
 runner = CliRunner()
 
