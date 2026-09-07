@@ -1,10 +1,10 @@
 import pytest
 from typer.testing import CliRunner
 
-import omelet.cli as cli
-from omelet.core.images import Image
-from omelet.core.install import DeadEnd, RebootRequired
-from omelet.core.provider import CheckResult, Completed, Diagnosis
+import host.cli as cli
+from host.core.images import Image
+from host.core.install import DeadEnd, RebootRequired
+from host.core.provider import CheckResult, Completed, Diagnosis
 
 runner = CliRunner()
 
@@ -54,13 +54,15 @@ def test_setup_registers_resume_and_asks_for_a_restart(monkeypatch):
 @pytest.fixture
 def provisionable(monkeypatch):
     """Everything that would touch the network or a real VM, stubbed."""
-    import omelet.core.bootstrap as bootstrap_mod
-    import omelet.core.download as download_mod
-    import omelet.core.install as install_mod
+    import host.core.bootstrap as bootstrap_mod
+    import host.core.download as download_mod
+    import host.core.install as install_mod
 
     monkeypatch.setattr(cli, "_provider_factory", lambda: StubProvider())
     monkeypatch.setattr(download_mod, "fetch", lambda image, dest: dest)
-    monkeypatch.setattr(bootstrap_mod, "bootstrap", lambda provider: None)
+    monkeypatch.setattr(bootstrap_mod, "bootstrap",
+                        lambda provider, **kwargs: None)
+    monkeypatch.setattr(install_mod, "agent_version_step", lambda *a, **k: None)
     monkeypatch.setattr(install_mod, "verify_step", lambda *a, **k: None)
     return monkeypatch
 
@@ -78,9 +80,9 @@ def test_resume_explains_why_setup_started_by_itself(provisionable):
 
 
 def test_a_failure_offers_a_suggested_action(provisionable):
-    import omelet.core.bootstrap as bootstrap_mod
+    import host.core.bootstrap as bootstrap_mod
 
-    def explode(provider):
+    def explode(provider, **kwargs):
         raise RuntimeError("apt-get: Temporary failure resolving 'archive.ubuntu.com'")
 
     provisionable.setattr(bootstrap_mod, "bootstrap", explode)
@@ -101,8 +103,8 @@ def test_uninstall_requires_purge_to_destroy_the_vm(monkeypatch):
 
 
 def test_uninstall_cleans_up_local_state_even_when_destroy_fails(monkeypatch):
-    from omelet.core.install import InstallState
-    from omelet.providers import default_install_dir
+    from host.core.install import InstallState
+    from host.providers import default_install_dir
 
     monkeypatch.setattr(cli, "_provider_factory", lambda: FailingDestroyProvider())
     root = default_install_dir().parent
@@ -120,27 +122,25 @@ def test_uninstall_cleans_up_local_state_even_when_destroy_fails(monkeypatch):
     assert not cache_dir.exists(), "the cache must be removed even if destroy fails"
 
 
-def test_uninstall_purge_removes_state_db_and_the_vm_directory(monkeypatch):
-    # Spec §8 names both explicitly; state.db and the vhdx are the two things
-    # that survive an uninstall and confuse the next install.
-    from omelet.providers import default_install_dir
+def test_uninstall_purge_removes_the_vm_directory(monkeypatch):
+    # The multi-gigabyte vhdx is what survives a failed destroy and fills the
+    # disk. Project state is no longer host-side at all -- it lives inside the
+    # VM at /opt/omelet/state.db and goes with it.
+    from host.providers import default_install_dir
 
     monkeypatch.setattr(cli, "_provider_factory", lambda: FailingDestroyProvider())
     install_dir = default_install_dir()
     install_dir.mkdir(parents=True, exist_ok=True)
     (install_dir / "ext4.vhdx").write_text("x")
-    state_db = install_dir.parent / "state.db"
-    state_db.write_text("x")
 
     runner.invoke(cli.app, ["uninstall", "--purge"])
 
-    assert not state_db.exists(), "state.db must not survive a purge"
     assert not install_dir.exists(), "the VM directory must not survive a purge"
 
 
 def test_uninstall_purge_succeeds_and_clears_state(monkeypatch):
-    from omelet.core.install import InstallState
-    from omelet.providers import default_install_dir
+    from host.core.install import InstallState
+    from host.providers import default_install_dir
 
     monkeypatch.setattr(cli, "_provider_factory", lambda: StubProvider())
     root = default_install_dir().parent
@@ -153,17 +153,17 @@ def test_uninstall_purge_succeeds_and_clears_state(monkeypatch):
     assert state.completed() == set()
 
 
-def test_selfcheck_reports_ok_for_all_four_bundled_assets():
+def test_selfcheck_reports_ok_for_every_bundled_asset():
     result = runner.invoke(cli.app, ["selfcheck"])
     assert result.exit_code == 0
-    for name in ("bootstrap.sh", "traefik.yml", "docker-compose.yml", "omelet.yaml"):
+    for name in ("bootstrap.sh", "stack.yml", "docker-compose.yml", "omelet.yaml"):
         assert name in result.stdout
     assert "MISSING" not in result.stdout
 
 
 def test_selfcheck_reports_missing_and_exits_nonzero_when_an_asset_cannot_resolve(
         monkeypatch, tmp_path):
-    import omelet.providers as providers
+    import host.providers as providers
 
     # Simulate a frozen build whose datas entry for omelet.yaml went missing:
     # __file__ is what the real resolution (Path(__file__).parent) depends on.
@@ -177,16 +177,36 @@ def test_selfcheck_reports_missing_and_exits_nonzero_when_an_asset_cannot_resolv
 
 
 def test_verify_template_resolves_to_the_bundled_compose_file():
-    from omelet.core.install import VERIFY_TEMPLATE
+    from host.core.install import VERIFY_TEMPLATE
     assert (VERIFY_TEMPLATE / "docker-compose.yml").is_file()
 
 
 def test_cli_never_resolves_bundled_assets_from_its_own_file():
     # cli.py is the frozen entry script, and PyInstaller gives it a __file__
-    # under the bundle root rather than under omelet/. Resolving an asset
+    # under the bundle root rather than under host/. Resolving an asset
     # from it therefore succeeds from source and silently misses in a build --
     # which is exactly how the nginx-hello template shipped missing once.
     from pathlib import Path
-    src = Path("omelet/cli.py").read_text()
+    src = Path("host/cli.py").read_text()
     assert "Path(__file__)" not in src, \
         "resolve bundled assets from an imported module, not from cli.py"
+
+
+def test_packaging_spec_bundles_exactly_the_assets_selfcheck_verifies():
+    # selfcheck's whole job is catching a bad PyInstaller `datas` entry by
+    # running the exe. That only works while the two lists agree: when
+    # traefik.yml was deleted, the spec kept bundling a file that no longer
+    # existed and selfcheck had quietly lost its entry, so nothing failed.
+    import re
+    from pathlib import Path
+
+    spec = Path("packaging/windows/omelet.spec").read_text()
+    datas = re.search(r"datas=\[(.*?)\n    \]", spec, re.DOTALL)
+    assert datas, "could not find the datas block in the spec"
+    bundled = set(re.findall(r'"\.\./\.\./([^"]+)"', datas[1]))
+
+    result = runner.invoke(cli.app, ["selfcheck"])
+    checked = set(re.findall(r"^\S+\s+(\S+) ->", result.stdout, re.MULTILINE))
+
+    assert bundled == checked, \
+        f"only bundled: {bundled - checked}; only selfchecked: {checked - bundled}"

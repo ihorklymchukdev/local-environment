@@ -1,6 +1,6 @@
 from typer.testing import CliRunner
-import omelet.cli as cli
-from omelet.core.provider import Completed
+import host.cli as cli
+from host.core.provider import Completed
 
 runner = CliRunner()
 
@@ -19,7 +19,7 @@ class FakeProvider:
     def exec(self, argv, *, root=False):
         self.execs.append(argv)
         # make the marker read report "already current" so bootstrap is a no-op
-        from omelet.core import constants
+        from host.core import constants
         if "cat" in argv:
             return Completed(0, str(constants.BOOTSTRAP_VERSION), "")
         return Completed(0, "", "")
@@ -57,3 +57,19 @@ def test_vm_create_skips_create_when_present(monkeypatch):
     result = runner.invoke(cli.app, ["vm", "create"])
     assert result.exit_code == 0
     assert fake.created is False
+
+
+def test_vm_start_reports_the_providers_own_failure_instead_of_saying_started(monkeypatch):
+    # `wsl.exe` failing is a Completed with a non-zero code, not an exception:
+    # dropping it printed "VM started." for a VM that does not exist.
+    class BrokenProvider(FakeProvider):
+        def start(self):
+            raise RuntimeError("the virtual machine 'omelet-vm' could not be "
+                               "started (exit 1): no such distribution")
+
+    monkeypatch.setattr(cli, "_provider_factory", lambda: BrokenProvider())
+    result = runner.invoke(cli.app, ["vm", "start"])
+    assert result.exit_code == 1
+    assert "VM started." not in result.stdout
+    assert "no such distribution" in result.output
+    assert "Traceback" not in result.output

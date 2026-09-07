@@ -3,7 +3,7 @@
 **Goal:** find out whether `LimaProvider` can create a VM and serve HTTP 200,
 before anyone builds a `.pkg` around it. Output is an answer, not code to keep.
 
-`omelet/providers/lima.py` and `omelet/providers/omelet.yaml` are marked
+`host/providers/lima.py` and `host/providers/omelet.yaml` are marked
 UNVERIFIED — written for parity against the `VmProvider` contract and never
 executed. Their command construction is unit-tested; nothing else is.
 
@@ -48,7 +48,7 @@ provider".
 omelet vm create
 ```
 
-This runs `limactl start --name=omelet-vm --tty=false <repo>/omelet/providers/omelet.yaml`
+This runs `limactl start --name=omelet-vm --tty=false <repo>/host/providers/omelet.yaml`
 and then the guest bootstrap. Watch for:
 
 - Does `limactl start` accept a config path as a positional argument in your
@@ -74,7 +74,7 @@ message verbatim.
 ## Step 4 — end to end
 
 ```bash
-omelet up ./omelet/templates/nginx-hello
+omelet up ./agent/templates/nginx-hello
 ```
 
 Record the printed URL, then:

@@ -182,7 +182,7 @@ An honest list, because Part 2 fixes most of it as a side effect.
 | **A wrong bind address reports success** | An app listening on `127.0.0.1` instead of `0.0.0.0` inside its container starts fine and stays running, so it is classified as healthy, and the URL then returns a proxy error with no explanation anywhere. |
 | **Only one port can cross the boundary** | `forward()` deliberately raises an error when the host and guest ports differ. So there is no way to reach a database in the VM from a tool like DBeaver. The blueprint calls this the second most requested feature after the URL itself. |
 | **The macOS half is unverified** | Written, never executed. |
-| **The local API server runs on the wrong side** | `omelet/api/server.py` is a small JSON-RPC service, built early as the attachment point for a future UI. It currently runs on the host. |
+| **The local API server runs on the wrong side** | `agent/api/server.py` is a small JSON-RPC service, built early as the attachment point for a future UI. It currently runs on the host. |
 
 ---
 
@@ -278,7 +278,7 @@ the side of the boundary where it belongs.
 
 ## 2.6 The migration is cheaper than it looks
 
-The `omelet/core/` package is already free of platform-specific code, and there is a test
+The `agent/core/` package is already free of platform-specific code, and there is a test
 that fails the build if anyone breaks that. It was written to keep Windows and macOS from
 diverging. The unintended payoff is that the same property makes it portable *into the guest*
 essentially unchanged — compose parsing, detection, label generation, identity, state and
@@ -286,7 +286,7 @@ classification can move as they are.
 
 Sequence:
 
-1. Wrap `omelet/core/` in an HTTP service. Containerize it.
+1. Wrap `agent/core/` in an HTTP service. Containerize it.
 2. Have the bootstrap start that container.
 3. Forward the agent's port from guest to host.
 4. Point the existing CLI at the agent over HTTP instead of calling core directly.
