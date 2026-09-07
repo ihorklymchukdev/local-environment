@@ -57,7 +57,7 @@ def run(steps, state, patch):
 def test_step_names_and_order_match_the_spec(tmp_path):
     names = [s.name for s in build(FakeProvider(), tmp_path)]
     assert names == ["preflight", "remediate", "reboot_gate", "fetch_image",
-                     "create_vm", "bootstrap", "verify", "finish"]
+                     "create_vm", "bootstrap", "agent", "verify", "finish"]
 
 
 def test_rootfs_is_set_even_when_fetch_image_is_skipped(tmp_path):
@@ -69,31 +69,34 @@ def test_rootfs_is_set_even_when_fetch_image_is_skipped(tmp_path):
 
     provider = FakeProvider(exists=False)
     steps = build(provider, tmp_path)
-    run(steps, state, {"bootstrap": lambda: None, "verify": lambda: None})
+    run(steps, state, {"bootstrap": lambda: None, "agent": lambda: None,
+                       "verify": lambda: None})
 
     assert provider.rootfs == tmp_path / "cache" / "ubuntu-24.04.4-wsl-amd64.wsl"
     assert provider.created, "create_vm must succeed on a re-run, not raise on a None rootfs"
 
 
-def test_verify_and_finish_run_again_on_a_re_run(tmp_path):
+def test_the_proving_steps_run_again_on_a_re_run(tmp_path):
     # A user whose VM broke re-runs setup; skipping verify would report success
-    # while proving nothing.
+    # while proving nothing, and the VM's agent can have changed since the run
+    # that recorded the compatibility check.
     state = InstallState(tmp_path / "state.json")
     provider = FakeProvider()
     ran = []
     patch = {"fetch_image": lambda: None,
              "bootstrap": lambda: None,
+             "agent": lambda: ran.append("agent"),
              "verify": lambda: ran.append("verify"),
              "finish": lambda: ran.append("finish") or "done"}
 
     run(build(provider, tmp_path), state, patch)
-    assert ran == ["verify", "finish"]
+    assert ran == ["agent", "verify", "finish"]
     assert "verify" not in state.completed(), \
         "a proof that only holds for one run must not be persisted"
 
     ran.clear()
     events = run(build(provider, tmp_path), state, patch)
-    assert ran == ["verify", "finish"], "verify must never be skipped"
+    assert ran == ["agent", "verify", "finish"], "verify must never be skipped"
     assert [e.step for e in events if e.status == "skipped"] == \
         ["preflight", "remediate", "reboot_gate", "fetch_image", "create_vm",
          "bootstrap"]
@@ -103,7 +106,7 @@ def test_finish_names_the_install_location_and_the_next_command(tmp_path):
     state = InstallState(tmp_path / "state.json")
     events = run(build(FakeProvider(), tmp_path), state,
                  {"fetch_image": lambda: None, "bootstrap": lambda: None,
-                  "verify": lambda: None})
+                  "agent": lambda: None, "verify": lambda: None})
     finish = next(e for e in events if e.step == "finish" and e.status == "done")
     assert str(tmp_path / "vm") in finish.message
     assert "omelet up" in finish.message

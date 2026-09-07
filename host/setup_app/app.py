@@ -16,6 +16,7 @@ _LABELS = {
     "fetch_image": "Downloading Linux image",
     "create_vm": "Creating the virtual machine",
     "bootstrap": "Installing Docker",
+    "agent": "Checking the Omelet service",
     "verify": "Testing the setup",
     "finish": "Finishing up",
 }

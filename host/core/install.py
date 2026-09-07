@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -122,6 +123,45 @@ def reboot_gate_step(provider) -> None:
         raise RebootRequired()
 
 
+class AgentTooOld(RuntimeError):
+    """The VM runs an older agent than this host was built against."""
+
+
+def _version_tuple(version: str) -> tuple[int, ...] | None:
+    """The leading dotted integers, or None for anything that cannot be
+    ordered -- a locally built image tagged `dev`, a git sha."""
+    parts = []
+    for chunk in version.strip().split("."):
+        digits = re.match(r"\d+", chunk)
+        if digits is None:
+            break
+        parts.append(int(digits.group()))
+    return tuple(parts) or None
+
+
+def agent_version_step(provider, *, client=None, expected: str | None = None):
+    """Fail early when the VM's agent is older than this host expects.
+
+    A newer agent is deliberately not an error: routes are added rather than
+    removed, so an agent ahead of the host still answers everything it asks
+    for, and refusing one would break a host downgrade or a pre-release image
+    for no gain. A version that cannot be ordered is not an error either --
+    refusing to set up over a string we cannot read is worse than continuing.
+    """
+    from host.client import AgentClient
+    from host.core import constants
+
+    expected = expected or constants.EXPECTED_AGENT_VERSION
+    client = client or AgentClient.for_provider(provider)
+    found = client.version()
+    want, have = _version_tuple(expected), _version_tuple(found)
+    if want is None or have is None or have >= want:
+        return None
+    raise AgentTooOld(
+        f"The virtual machine is running an older version of the Omelet "
+        f"service ({found}) than this app expects ({expected}).")
+
+
 class VerificationFailed(RuntimeError):
     """The smoke-test project did not serve a successful response."""
 
@@ -232,6 +272,9 @@ _ACTIONS = {
     "bootstrap": "Docker could not be installed inside the virtual machine. The "
                  "detail above comes from inside the VM. Run setup again; if it "
                  "fails the same way twice, send us that text.",
+    "agent": "The Omelet service inside the virtual machine is out of date and "
+             "setup could not update it in place. Use Copy diagnostics and send "
+             "us the text.",
     "verify": "The test project did not answer. Run setup again; if it fails a "
               "second time, use Copy diagnostics and send us the text.",
 }
@@ -265,6 +308,10 @@ def default_steps(provider, *, cache_dir, template_dir: Path, domain,
         step("fetch_image", fetch_image),
         step("create_vm", lambda: None if provider.exists() else provider.create()),
         step("bootstrap", lambda: _bootstrap(provider)),
+        # Before verify, not after: a host talking to an agent that predates
+        # the routes it uses should say so in one sentence, not fail several
+        # minutes into a compose run with a 404 on a route name.
+        step("agent", lambda: agent_version_step(provider), always_run=True),
         step("verify", lambda: verify_step(provider, template_dir, domain),
              always_run=True),
         step("finish", lambda: finish_step(install_dir), always_run=True),

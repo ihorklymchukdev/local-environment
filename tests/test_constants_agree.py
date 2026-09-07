@@ -52,3 +52,19 @@ def test_the_readiness_window_is_the_same_on_both_sides_of_the_seam():
     from host.core.install import READY_TIMEOUT as host_timeout
 
     assert host_timeout == agent_timeout
+
+
+def test_the_agent_version_the_host_expects_is_the_one_the_image_reports():
+    # Three files name this version: the tag in constants.AGENT_IMAGE, the
+    # Dockerfile's AGENT_VERSION (which becomes GET /version's answer), and the
+    # agent package's own __version__. A bump that misses one makes the host's
+    # compatibility check report every VM as out of date.
+    import re
+    from pathlib import Path
+
+    from agent import __version__ as package_version
+
+    dockerfile = Path(__file__).resolve().parent.parent / "agent" / "Dockerfile"
+    match = re.search(r"^ARG AGENT_VERSION=(\S+)", dockerfile.read_text(), re.M)
+    assert match, "the Dockerfile must default AGENT_VERSION"
+    assert match[1] == host_constants.EXPECTED_AGENT_VERSION == package_version

@@ -40,3 +40,7 @@ GUEST_TOKEN = f"{GUEST_ROOT}/agent.token"
 
 # Must match stack.yml's OMELET_AGENT_IMAGE default; a test holds the two equal.
 AGENT_IMAGE = "ghcr.io/ihorklymchukdev/omelet-agent:0.1.0"
+# The agent version this host expects to talk to, derived from the tag it
+# deploys rather than written out again: two literals would let a bumped image
+# leave the compatibility check comparing against a version nothing runs.
+EXPECTED_AGENT_VERSION = AGENT_IMAGE.rsplit(":", 1)[-1]
