@@ -269,13 +269,19 @@ class AgentClient:
                 for item in sorted(Path(local_dir).iterdir()):
                     tar.add(item, arcname=item.name, filter=_uploadable)
             size = archive.tell()
-            archive.seek(0)
-            with self._open("POST", f"/projects/{project_id}/files",
-                            data=archive,
-                            headers={"Content-Type": "application/gzip",
-                                     "Content-Length": str(size)},
-                            timeout=UPLOAD_TIMEOUT) as response:
-                body = response.read().decode("utf-8")
+
+            def send():
+                # Rewound per attempt: a retry after `project_busy` must send
+                # the archive again, not the empty tail the last one left.
+                archive.seek(0)
+                with self._open("POST", f"/projects/{project_id}/files",
+                                data=archive,
+                                headers={"Content-Type": "application/gzip",
+                                         "Content-Length": str(size)},
+                                timeout=UPLOAD_TIMEOUT) as response:
+                    return response.read().decode("utf-8")
+
+            body = self._while_busy(send)
         return json.loads(body) if body.strip() else {}
 
     def project_up(self, project_id: str) -> str:

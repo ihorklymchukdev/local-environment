@@ -254,6 +254,26 @@ def test_upload_directory_sends_a_tar_gz_of_the_directory_contents(tmp_path):
     assert "docker-compose.yml" in names and "app/index.html" in names
 
 
+def test_an_upload_onto_a_busy_project_is_retried_with_the_whole_archive(tmp_path):
+    # The agent refuses a write while a job holds the project, so `up` on a
+    # project that is still stopping must retry -- and retry the archive from
+    # the start, not from wherever the first attempt left the file.
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n")
+    answers = [http_error(409, "project_busy", "another operation is running"),
+               {"id": "blog", "files": []}]
+
+    clock = Clock()
+    c, opener = client(lambda call: answers.pop(0), clock)
+    c.upload_directory("blog", tmp_path)
+
+    assert clock.slept, "a busy project must be retried after a wait"
+    first, second = opener.calls
+    assert second.body == first.body and second.body, \
+        "the retry must re-send the whole archive"
+    with tarfile.open(fileobj=io.BytesIO(second.body), mode="r:gz") as tar:
+        assert tar.getnames() == ["docker-compose.yml"]
+
+
 def test_the_upload_leaves_out_repositories_caches_and_the_generated_overlay(
         tmp_path):
     # A repository's object store re-sent on every `up` is silently slow, can

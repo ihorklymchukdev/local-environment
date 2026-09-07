@@ -345,20 +345,26 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
             raise
         return path
 
+    # Held across the whole body, not just the extract: an archive that lands
+    # between the overlay being written and compose reading docker-compose.yml
+    # starts a project from two different versions of itself. Refused rather
+    # than queued, like every other lock holder here -- the host client retries
+    # a `project_busy` on its own, where the wait can be bounded and reported.
     @app.post("/projects/{project_id}/files")
     async def upload_files(project_id: str, request: Request) -> dict:
         require_row(project_id)
         d = project_dir(project_id)
-        tmp = await _stream_to_tempfile(request, d.parent)
-        try:
+        with locks.held(project_id):
+            tmp = await _stream_to_tempfile(request, d.parent)
             try:
-                files.extract_archive(tmp, d)
-            except files.PathTraversalError as e:
-                raise ApiError("path_traversal", str(e), 400) from e
-            except files.BadArchiveError as e:
-                raise ApiError("bad_archive", str(e), 400) from e
-        finally:
-            tmp.unlink(missing_ok=True)
+                try:
+                    files.extract_archive(tmp, d)
+                except files.PathTraversalError as e:
+                    raise ApiError("path_traversal", str(e), 400) from e
+                except files.BadArchiveError as e:
+                    raise ApiError("bad_archive", str(e), 400) from e
+            finally:
+                tmp.unlink(missing_ok=True)
         return {"id": project_id, "files": files.list_tree(d)}
 
     @app.get("/projects/{project_id}/files")
@@ -371,14 +377,15 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
         require_row(project_id)
         target = resolve_path(project_id, file_path)
         d = project_dir(project_id)
-        # Staged next to the project directory, not inside it, so a listing
-        # never catches the upload half-written.
-        tmp = await _stream_to_tempfile(request, d.parent)
-        try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(tmp, target)
-        finally:
-            tmp.unlink(missing_ok=True)
+        with locks.held(project_id):
+            # Staged next to the project directory, not inside it, so a listing
+            # never catches the upload half-written.
+            tmp = await _stream_to_tempfile(request, d.parent)
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(tmp, target)
+            finally:
+                tmp.unlink(missing_ok=True)
         return {"path": file_path, "size": target.stat().st_size}
 
     @app.get("/projects/{project_id}/files/{file_path:path}")
@@ -398,7 +405,8 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
         if not target.is_file():
             raise ApiError("file_not_found",
                            f"no file '{file_path}' in project '{project_id}'", 404)
-        target.unlink()
+        with locks.held(project_id):
+            target.unlink()
         return {"path": file_path, "deleted": True}
 
     @app.delete("/projects/{project_id}")

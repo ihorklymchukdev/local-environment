@@ -233,6 +233,32 @@ def test_a_second_lifecycle_operation_on_a_busy_project_is_refused(env):
     assert env.client.post("/projects/blog/down").status_code == 202
 
 
+def test_a_file_write_during_a_running_job_is_refused_but_a_read_is_not(env):
+    # An archive landing between the overlay being written and compose reading
+    # docker-compose.yml starts a project from two different versions of
+    # itself. Reads carry no such risk and must stay available while a job runs.
+    from tests.agent.test_files import _tar_bytes
+
+    _create(env)
+    _write_compose(env, "blog")
+    env.runner.up_gate = threading.Event()
+    first = env.client.post("/projects/blog/up")
+    assert first.status_code == 202
+
+    for resp in (env.client.post("/projects/blog/files", content=_tar_bytes()),
+                 env.client.put("/projects/blog/files/a.txt", content=b"hi"),
+                 env.client.delete("/projects/blog/files/docker-compose.yml")):
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["error"]["code"] == "project_busy"
+
+    assert env.client.get("/projects/blog/files").status_code == 200
+
+    env.runner.up_gate.set()
+    env.jobs.wait(first.json()["job_id"], timeout=5)
+    assert env.client.post("/projects/blog/files",
+                           content=_tar_bytes()).status_code == 200
+
+
 def test_creating_the_same_project_twice_conflicts(env):
     assert _create(env).status_code == 201
     resp = _create(env)
