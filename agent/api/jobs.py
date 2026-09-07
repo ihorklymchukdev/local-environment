@@ -71,14 +71,16 @@ class JobRegistry:
     restart loses them, and the host re-reads project status from the API.
     """
 
-    def __init__(self):
+    def __init__(self, max_finished: int = 100):
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
+        self._max_finished = max_finished
 
     def submit(self, work: Work) -> str:
         job = Job(uuid.uuid4().hex[:12])
         with self._lock:
             self._jobs[job.id] = job
+            self._evict_finished()
         threading.Thread(target=self._run, args=(job, work), daemon=True).start()
         return job.id
 
@@ -91,6 +93,16 @@ class JobRegistry:
             job.finish(FAILED, detail=f"{type(e).__name__}: {e}")
         else:
             job.finish(DONE, result=result)
+
+    def _evict_finished(self) -> None:
+        """Finished jobs keep their whole log buffer alive; a long-lived agent
+        would grow one per compose operation forever. Runs when a job is
+        submitted, so the newest finished job always survives. Caller holds the
+        lock."""
+        finished = sorted((j for j in self._jobs.values() if j.finished_at is not None),
+                          key=lambda j: j.finished_at)
+        for job in finished[:max(0, len(finished) - self._max_finished)]:
+            del self._jobs[job.id]
 
     def get(self, job_id: str) -> Job | None:
         with self._lock:
@@ -120,8 +132,8 @@ class JobRegistry:
         while True:
             with job.cond:
                 while sent >= len(job.logs) and job.state == RUNNING:
-                    # Timed wait so a worker that dies without notifying (it
-                    # cannot, but still) can never wedge a reader forever.
+                    # Timed wait as defence in depth: a reader must not hang
+                    # forever if a worker ever fails to notify.
                     job.cond.wait(0.25)
                 chunk = job.logs[sent:]
                 sent += len(chunk)

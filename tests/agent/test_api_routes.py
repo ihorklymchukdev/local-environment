@@ -1,3 +1,4 @@
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 from agent.api.app import create_app
 from agent.core.config import AgentConfig
 from agent.core.exec import Completed
+from agent.core.state import State
 
 PS_RUNNING = '[{"Service":"web","State":"running","ExitCode":0}]'
 # NDJSON: docker compose emits one object per line on some versions.
@@ -19,6 +21,7 @@ services:
     image: nginx
     ports: ["8080:80"]
 """
+COMPOSE_MALFORMED = "services:\n  web:\n   image: nginx\n    ports: bad\n"
 COMPOSE_AMBIGUOUS = """
 services:
   api:
@@ -39,12 +42,15 @@ class FakeRunner:
         self.down = Completed(0, "", "")
         self.logs = Completed(0, "web-1 | listening on 80\n", "")
         self.stream_lines = ["web-1 | one\n", "web-1 | two\n"]
+        self.up_gate = None
 
     def exec(self, argv, *, root=False):
         self.calls.append(argv)
         if argv[1] == "version":
-            return self.docker_version
+            return self._reply(self.docker_version)
         if argv[-2:] == ["up", "-d"]:
+            if self.up_gate is not None:
+                assert self.up_gate.wait(5), "the up job was never released"
             return self.up
         if "ps" in argv:
             return self.ps
@@ -53,6 +59,12 @@ class FakeRunner:
         if "logs" in argv:
             return self.logs
         return Completed(0, "", "")
+
+    @staticmethod
+    def _reply(scripted):
+        if isinstance(scripted, Exception):
+            raise scripted
+        return scripted
 
     def stream(self, argv, *, root=False):
         self.calls.append(argv)
@@ -74,8 +86,11 @@ def env(tmp_path):
     runner = FakeRunner()
     app = create_app(config=config, runner=runner)
     with TestClient(app) as client:
+        # raw_client returns the 500 a real caller would see instead of
+        # re-raising the exception inside the test.
         yield SimpleNamespace(client=client, config=config, runner=runner,
-                              state=app.state.state, jobs=app.state.jobs)
+                              state=app.state.state, jobs=app.state.jobs,
+                              raw_client=TestClient(app, raise_server_exceptions=False))
 
 
 def _create(env, pid="blog", **body):
@@ -99,7 +114,7 @@ def test_importing_the_app_module_builds_nothing(env):
     # drag the whole suite onto the real filesystem.
     import agent.api.app as module
     assert not [name for name, value in vars(module).items()
-                if isinstance(value, FastAPI)]
+                if isinstance(value, (FastAPI, State))]
 
 
 def test_missing_project_returns_a_structured_404(env):
@@ -125,6 +140,63 @@ def test_framework_errors_use_the_same_error_body(env):
     invalid = env.client.post("/projects", json={})
     assert invalid.status_code == 422
     assert invalid.json()["error"]["code"] == "invalid_request"
+
+
+def test_an_unexpected_failure_still_answers_the_one_error_shape(env):
+    env.runner.docker_version = RuntimeError("the runner exploded")
+    resp = env.raw_client.get("/health")
+    assert resp.status_code == 500
+    assert resp.json()["error"]["code"] == "internal_error"
+    assert "exploded" not in resp.text, "an internal message must not leak out"
+
+
+def test_a_malformed_compose_file_is_a_4xx_not_a_500(env):
+    # Uploading a broken compose file is the most ordinary thing a user does.
+    _create(env)
+    _write_compose(env, "blog", COMPOSE_MALFORMED)
+
+    up = env.raw_client.post("/projects/blog/up")
+    assert up.status_code == 422
+    assert up.json()["error"]["code"] == "invalid_compose"
+    assert "line 4" in up.json()["error"]["message"], "the parser must locate it"
+
+    one = env.raw_client.get("/projects/blog")
+    assert one.status_code == 200
+    assert one.json()["problem"]["code"] == "invalid_compose"
+
+
+def test_one_broken_project_does_not_take_the_listing_down(env):
+    _create(env, "blog")
+    _write_compose(env, "blog")
+    _create(env, "broken")
+    _write_compose(env, "broken", COMPOSE_MALFORMED)
+
+    listed = env.raw_client.get("/projects")
+    assert listed.status_code == 200
+    by_id = {p["id"]: p for p in listed.json()["projects"]}
+    assert by_id["blog"]["urls"] == ["http://blog.test.local:41080"]
+    assert by_id["blog"]["problem"] is None
+    assert by_id["broken"]["problem"]["code"] == "invalid_compose"
+
+
+def test_a_second_lifecycle_operation_on_a_busy_project_is_refused(env):
+    _create(env)
+    _write_compose(env, "blog")
+    env.runner.up_gate = threading.Event()
+
+    first = env.client.post("/projects/blog/up")
+    assert first.status_code == 202
+
+    for resp in (env.client.post("/projects/blog/up"),
+                 env.client.post("/projects/blog/down"),
+                 env.client.delete("/projects/blog")):
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "project_busy"
+
+    env.runner.up_gate.set()
+    env.jobs.wait(first.json()["job_id"], timeout=5)
+    # The lock is released with the job, not leaked.
+    assert env.client.post("/projects/blog/down").status_code == 202
 
 
 def test_creating_the_same_project_twice_conflicts(env):
@@ -239,6 +311,14 @@ def test_project_logs_return_compose_output_and_follow_streams(env):
 
     plain = env.client.get("/projects/blog/logs")
     assert plain.text == "web-1 | listening on 80\n"
+
+    # Compose exits non-zero when the project was never created; an empty 200
+    # would hide the reason.
+    env.runner.logs = Completed(1, "", "no configuration file provided")
+    failed = env.client.get("/projects/blog/logs")
+    assert failed.status_code == 409
+    assert failed.json()["error"]["code"] == "logs_unavailable"
+    assert "no configuration file" in failed.json()["error"]["message"]
 
     followed = env.client.get("/projects/blog/logs", params={"follow": True})
     assert followed.text == "web-1 | one\nweb-1 | two\n"

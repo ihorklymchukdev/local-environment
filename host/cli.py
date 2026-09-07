@@ -139,7 +139,11 @@ def status():
 def logs(project_id: str, service: str = typer.Option(None)):
     """Show a project's container logs."""
     from agent.core.lifecycle import project_logs
-    typer.echo(project_logs(_provider(), project_id, service))
+    result = project_logs(_provider(), project_id, service)
+    if not result.ok:
+        typer.echo(result.stderr.strip() or "could not read the logs", err=True)
+        raise typer.Exit(1)
+    typer.echo(result.stdout)
 
 
 @app.command()

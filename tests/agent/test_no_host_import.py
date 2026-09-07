@@ -11,11 +11,16 @@ def _imported_modules(tree):
             yield node.lineno, node.module or ""
 
 
+AGENT = Path(__file__).resolve().parents[2] / "agent"
+
+
 def test_agent_never_imports_from_host():
     # The agent ships as a Docker image built from agent/ alone; an import of
     # host code would only fail once the image runs.
     offenders = []
-    for py in sorted(Path("agent").rglob("*.py")):
+    scanned = sorted(AGENT.rglob("*.py"))
+    assert scanned, f"scanned nothing under {AGENT}"
+    for py in scanned:
         for lineno, module in _imported_modules(ast.parse(py.read_text())):
             if module == "host" or module.startswith("host."):
                 offenders.append(f"{py}:{lineno} imports {module}")

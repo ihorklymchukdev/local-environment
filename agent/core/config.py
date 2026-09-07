@@ -19,6 +19,8 @@ class AgentConfig:
     to compose from `constants.GUEST_PROJECTS`.
     """
 
+    bind_host: str = "0.0.0.0"
+    port: int = constants.AGENT_PORT
     domain: str = constants.DEFAULT_DOMAIN
     edge_port: int = constants.EDGE_PORT
     projects_root: Path = Path(constants.GUEST_PROJECTS)
@@ -29,6 +31,8 @@ class AgentConfig:
     def from_env(cls, env: dict | None = None) -> "AgentConfig":
         env = os.environ if env is None else env
         return cls(
+            bind_host=env.get("OMELET_AGENT_HOST", "0.0.0.0"),
+            port=int(env.get("OMELET_AGENT_PORT", constants.AGENT_PORT)),
             domain=env.get("OMELET_DOMAIN", constants.DEFAULT_DOMAIN),
             edge_port=int(env.get("OMELET_EDGE_PORT", constants.EDGE_PORT)),
             projects_root=Path(env.get("OMELET_PROJECTS_ROOT",

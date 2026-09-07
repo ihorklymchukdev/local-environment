@@ -84,5 +84,8 @@ def logs_argv(project_id: str, service: str | None = None, *,
     return argv
 
 
-def project_logs(provider, project_id: str, service: str | None = None) -> str:
-    return provider.exec(logs_argv(project_id, service), root=True).stdout
+def project_logs(provider, project_id: str, service: str | None = None):
+    """Returns the `Completed`, not its stdout: compose exits non-zero when the
+    project was never created or the daemon is down, and dropping that turned a
+    real failure into an empty log listing."""
+    return provider.exec(logs_argv(project_id, service), root=True)

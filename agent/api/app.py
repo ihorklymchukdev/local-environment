@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
@@ -11,7 +13,6 @@ from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..core import lifecycle
-from ..core.compose import load_compose
 from ..core.config import AgentConfig
 from ..core.detect import AmbiguousError
 from ..core.exec import LocalRunner
@@ -21,6 +22,7 @@ from ..core.state import State
 from .jobs import JobFailed, JobRegistry
 
 TEXT = "text/plain; charset=utf-8"
+log = logging.getLogger("omelet.agent")
 
 
 class ApiError(Exception):
@@ -56,6 +58,41 @@ class ThreadLocalState:
         return getattr(self._bound(), name)
 
 
+def _busy(project_id: str) -> "ApiError":
+    return ApiError("project_busy",
+                    f"another operation on '{project_id}' is still running", 409)
+
+
+class ProjectLocks:
+    """One lifecycle operation per project at a time. Non-blocking on purpose:
+    two `up` jobs would race on the same `.omelet/overlay.yml`, and a blocking
+    lock would only move a multi-minute hold onto whoever waits."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._held: set[str] = set()
+
+    def acquire(self, project_id: str) -> bool:
+        with self._lock:
+            if project_id in self._held:
+                return False
+            self._held.add(project_id)
+            return True
+
+    def release(self, project_id: str) -> None:
+        with self._lock:
+            self._held.discard(project_id)
+
+    @contextmanager
+    def held(self, project_id: str):
+        if not self.acquire(project_id):
+            raise _busy(project_id)
+        try:
+            yield
+        finally:
+            self.release(project_id)
+
+
 class WebOverride(BaseModel):
     service: str
     port: int
@@ -85,6 +122,7 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
     runner = runner or LocalRunner()
     state = state if state is not None else ThreadLocalState(config.state_db)
     jobs = jobs or JobRegistry()
+    locks = ProjectLocks()
 
     app = FastAPI(title="omelet-agent", version=config.version)
     app.state.config = config
@@ -106,6 +144,14 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
             exc.status_code, "http_error")
         return _body(code, str(exc.detail), exc.status_code)
 
+    @app.exception_handler(Exception)
+    async def _unexpected(_request, exc: Exception):
+        # The traceback goes to the agent's log, never into the response: the
+        # host client only needs a code it can act on.
+        log.exception("unhandled error serving a request")
+        return _body("internal_error",
+                     f"the agent failed with an unexpected {type(exc).__name__}", 500)
+
     def project_dir(project_id: str) -> Path:
         return Path(config.projects_root) / project_id
 
@@ -122,6 +168,20 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
             raise ApiError("job_not_found", f"no job with id '{job_id}'", 404)
         return job
 
+    def parse_yaml(path: Path) -> dict:
+        try:
+            data = yaml.safe_load(path.read_text()) or {}
+        except yaml.YAMLError as e:
+            # The parser already says where the mistake is; keep it on one line.
+            raise ApiError("invalid_compose",
+                           f"{path.name} is not valid YAML: {' '.join(str(e).split())}",
+                           422) from e
+        if not isinstance(data, dict):
+            raise ApiError("invalid_compose",
+                           f"{path.name} must be a mapping, not a "
+                           f"{type(data).__name__}", 422)
+        return data
+
     def load(project_id: str) -> Project:
         d = project_dir(project_id)
         compose_path = d / "docker-compose.yml"
@@ -129,26 +189,41 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
             raise ApiError("compose_missing",
                            f"project '{project_id}' has no docker-compose.yml", 400)
         project_yml = d / ".omelet" / "project.yml"
-        overrides = yaml.safe_load(project_yml.read_text()) if project_yml.exists() else None
+        overrides = parse_yaml(project_yml) if project_yml.exists() else None
         try:
-            return load_project(load_compose(compose_path), overrides, project_id)
+            return load_project(parse_yaml(compose_path), overrides, project_id)
         except AmbiguousError as e:
             # The detector's message is already written for a human.
             raise ApiError("invalid_project", str(e), 422) from e
+        except (AttributeError, KeyError, TypeError, ValueError) as e:
+            raise ApiError("invalid_project",
+                           f"the project definition cannot be read: {e}", 422) from e
 
     def urls_for(project: Project, domain: str) -> list[str]:
         return [f"http://{host_for(project.id, web, domain)}:{config.edge_port}"
                 for web in project.webs]
 
     def payload(row: dict) -> dict:
+        # A project with broken or missing files still has a status, and one
+        # broken project must never take the whole listing down with it.
+        problem = None
+        urls: list[str] = []
         try:
             urls = urls_for(load(row["id"]), row["domain"])
-        except ApiError:
-            # Status must stay readable for a project whose files are missing
-            # or whose web service cannot be detected yet.
-            urls = []
+        except ApiError as e:
+            problem = {"code": e.code, "message": e.message}
         return {"id": row["id"], "status": row["status"], "domain": row["domain"],
-                "path": row["guest_path"], "urls": urls}
+                "path": row["guest_path"], "urls": urls, "problem": problem}
+
+    def submit_locked(project_id: str, work) -> str:
+        """The job releases the lock itself, in its own `finally`."""
+        if not locks.acquire(project_id):
+            raise _busy(project_id)
+        try:
+            return jobs.submit(work)
+        except BaseException:
+            locks.release(project_id)
+            raise
 
     @app.get("/health")
     def health() -> dict:
@@ -202,9 +277,11 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
     def delete_project(project_id: str) -> dict:
         require_row(project_id)
         # `compose down` is bounded by container stop timeouts, not by an image
-        # build, so this is the one compose call that stays synchronous.
-        result = lifecycle.compose_down(runner, project_id)
-        state.remove_project(project_id)
+        # build, so this is the one compose call that stays synchronous. The
+        # lock stops it removing the state row under a running `up`.
+        with locks.held(project_id):
+            result = lifecycle.compose_down(runner, project_id)
+            state.remove_project(project_id)
         return {"id": project_id, "stopped": result.ok,
                 "detail": "" if result.ok else (result.stderr or result.stdout).strip()}
 
@@ -217,45 +294,55 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
         domain = row["domain"]
         directory = project_dir(project_id)
 
-        def work(log):
-            log(f"compose up {project_id}\n")
-            status, _lifecycle_urls, detail = lifecycle.compose_up(
-                runner, project, directory, domain)
-            state.set_status(project_id, status)
-            result = {"status": status, "urls": urls_for(project, domain)}
-            log(f"status: {status}\n")
-            if detail:
-                log(f"{detail}\n")
-            if status != STARTED_OK:
-                raise JobFailed(
-                    detail or f"containers did not stay up (status: {status})",
-                    result=result)
-            return result
+        def work(write):
+            try:
+                write(f"compose up {project_id}\n")
+                status, _lifecycle_urls, detail = lifecycle.compose_up(
+                    runner, project, directory, domain)
+                state.set_status(project_id, status)
+                result = {"status": status, "urls": urls_for(project, domain)}
+                write(f"status: {status}\n")
+                if detail:
+                    write(f"{detail}\n")
+                if status != STARTED_OK:
+                    raise JobFailed(
+                        detail or f"containers did not stay up (status: {status})",
+                        result=result)
+                return result
+            finally:
+                locks.release(project_id)
 
-        return {"job_id": jobs.submit(work)}
+        return {"job_id": submit_locked(project_id, work)}
 
     @app.post("/projects/{project_id}/down", status_code=202)
     def project_down(project_id: str) -> dict:
         require_row(project_id)
 
-        def work(log):
-            log(f"compose down {project_id}\n")
-            result = lifecycle.compose_down(runner, project_id)
-            if not result.ok:
-                raise JobFailed((result.stderr or result.stdout).strip()
-                                or "compose down failed")
-            state.set_status(project_id, "stopped")
-            return {"status": "stopped"}
+        def work(write):
+            try:
+                write(f"compose down {project_id}\n")
+                result = lifecycle.compose_down(runner, project_id)
+                if not result.ok:
+                    raise JobFailed((result.stderr or result.stdout).strip()
+                                    or "compose down failed")
+                state.set_status(project_id, "stopped")
+                return {"status": "stopped"}
+            finally:
+                locks.release(project_id)
 
-        return {"job_id": jobs.submit(work)}
+        return {"job_id": submit_locked(project_id, work)}
 
     @app.get("/projects/{project_id}/logs")
     def project_logs(project_id: str, follow: bool = False,
                      service: str | None = None):
         require_row(project_id)
         if not follow:
-            return PlainTextResponse(
-                lifecycle.project_logs(runner, project_id, service), media_type=TEXT)
+            result = lifecycle.project_logs(runner, project_id, service)
+            if not result.ok:
+                raise ApiError("logs_unavailable",
+                               (result.stderr or result.stdout).strip()
+                               or "docker compose logs failed", 409)
+            return PlainTextResponse(result.stdout, media_type=TEXT)
         argv = lifecycle.logs_argv(project_id, service, follow=True)
         return StreamingResponse(runner.stream(argv, root=True), media_type=TEXT)
 

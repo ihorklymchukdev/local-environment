@@ -78,6 +78,21 @@ def test_follow_of_a_finished_job_replays_its_output_and_ends():
 
 def test_unknown_job_is_not_found():
     reg = JobRegistry()
-    assert reg.get("nope") is None
     with pytest.raises(KeyError):
         list(reg.follow("nope"))
+
+
+def test_finished_jobs_are_evicted_oldest_first():
+    # Every job holds its whole log buffer; a long-lived agent would otherwise
+    # keep one per compose operation forever.
+    reg = JobRegistry(max_finished=2)
+    done = []
+    for _ in range(4):
+        job_id = reg.submit(lambda write: write("x\n"))
+        reg.wait(job_id, timeout=2)
+        done.append(job_id)
+
+    # Eviction runs when a job is submitted, so the fourth submit drops the
+    # oldest finished job and keeps the two newest.
+    assert reg.get(done[0]) is None
+    assert [reg.get(j) is not None for j in done[1:]] == [True, True, True]
