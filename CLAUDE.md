@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A PoC CLI (`omelet`) that creates a managed Linux VM, installs Docker inside it, runs any
 `docker-compose` project in the guest, and hands back a working URL on the host.
 Windows/WSL2 is the primary platform; macOS/Lima exists for parity and is **unverified**
-(`omelet/providers/lima.py`, `omelet/providers/omelet.yaml` — both carry an UNVERIFIED banner).
+(`host/providers/lima.py`, `host/providers/omelet.yaml` — both carry an UNVERIFIED banner).
 
 `task.md` and `docs/superpowers/plans/2026-08-14-local-runtime-poc.md` hold the original blueprint
 and task plan; `.superpowers/sdd/` holds the per-task execution ledger.
@@ -17,8 +17,8 @@ and task plan; `.superpowers/sdd/` holds the per-task execution ledger.
 ```bash
 pip install -e ".[dev]"
 
-python3 -m pytest -q                                    # full suite (76 tests, ~0.3s)
-python3 -m pytest tests/core/test_project.py -q         # one file
+python3 -m pytest -q                                    # full suite (151 tests, ~0.3s)
+python3 -m pytest tests/agent/test_project.py -q        # one file
 python3 -m pytest -k classify -q                        # one test by name
 ```
 
@@ -39,25 +39,26 @@ host CLI (typer)  →  VmProvider.exec()  →  guest: dockerd + traefik + projec
 host localhost:39080 ──────────────────────────→  traefik :39080 → routes by Host header
 ```
 
-### Hard invariant: no platform branching outside `omelet/providers/`
+### Hard invariant: no platform branching outside `host/providers/`
 
-`tests/test_no_platform_leak.py` greps every `omelet/**/*.py` outside `providers/` for
-`sys.platform`, `platform.system()`, `os.name` and fails on any hit. `omelet/providers/__init__.py`
-is the single place the host platform is resolved (`get_provider()`, `default_install_dir()`).
+`tests/test_no_platform_leak.py` greps every `host/**/*.py` and `agent/**/*.py` outside
+`providers/` for `sys.platform`, `platform.system()`, `os.name` and fails on any hit.
+`host/providers/__init__.py` is the single place the host platform is resolved
+(`get_provider()`, `default_install_dir()`).
 Do not add an `if windows` anywhere else — push the difference into a provider method.
 
 ### Layers
 
-- `omelet/core/provider.py` — the `VmProvider` Protocol plus `Completed` / `CheckResult` /
+- `host/core/provider.py` — the `VmProvider` Protocol plus `Completed` / `CheckResult` /
   `Diagnosis` value types. Providers are **duck-typed against the Protocol, not subclasses**.
-- `omelet/providers/` — `Wsl2Provider` (shells `wsl.exe`), `LimaProvider` (shells `limactl`).
+- `host/providers/` — `Wsl2Provider` (shells `wsl.exe`), `LimaProvider` (shells `limactl`).
   Both take an injectable `runner` callable (defaults to `subprocess.run(..., capture_output=True)`),
   which is what makes them unit-testable.
-- `omelet/core/` — all platform-free logic: compose parsing, web detection, Traefik overlay
+- `agent/core/` — all platform-free logic: compose parsing, web detection, Traefik overlay
   generation, project identity, failure classification, guest lifecycle, sqlite state.
-- `omelet/guest/` — assets pushed into the VM: `bootstrap.sh` (docker-ce from the official repo,
+- `host/provision/` — assets pushed into the VM: `bootstrap.sh` (docker-ce from the official repo,
   `edge` network, Traefik container) and `traefik.yml`.
-- `omelet/api/server.py` — minimal JSON-RPC over `http.server` on 127.0.0.1:39099. `dispatch()` is
+- `agent/api/server.py` — minimal JSON-RPC over `http.server` on 127.0.0.1:39099. `dispatch()` is
   pure and testable; `serve()` is the transport.
 
 ### Things that will bite you
@@ -72,7 +73,7 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   command passthrough emits UTF-8. `decode_wsl()` sniffs NUL bytes to pick. Use `_meta()` for meta
   commands and `exec()` for passthrough — mixing them corrupts output.
 - **Bootstrap idempotency is a version marker**, `/opt/omelet/.bootstrapped` compared against
-  `constants.BOOTSTRAP_VERSION`. **Bump `BOOTSTRAP_VERSION` whenever `omelet/guest/bootstrap.sh`
+  `constants.BOOTSTRAP_VERSION`. **Bump `BOOTSTRAP_VERSION` whenever `host/provision/bootstrap.sh`
   changes**, or existing VMs silently skip the new bootstrap.
 - **Guest failures must stay loud.** `provider.exec()` returns a `Completed` and never raises, so
   every caller has to check `.ok` itself. `bootstrap.py` routes its calls through `_run()`, which
@@ -96,9 +97,9 @@ Do not add an `if windows` anywhere else — push the difference into a provider
 - No test ever spawns a real subprocess or touches a real VM. Provider tests inject a `FakeRunner`
   that records `argv` and returns scripted bytes; CLI tests monkeypatch `cli._provider_factory` with
   a `FakeProvider`. Assertions are about **constructed argv and decoded output**, not side effects.
-- `tests/core/test_acceptance_detection.py` runs the five real-world compose shapes in
+- `tests/agent/test_acceptance_detection.py` runs the five real-world compose shapes in
   `tests/fixtures/compose/` through `detect_web` — add a fixture there when changing detection rules.
-- `tests/guest/test_bootstrap_shell.py` shells `bash -n` over `bootstrap.sh` and asserts on its text
+- `tests/host/test_bootstrap_shell.py` shells `bash -n` over `bootstrap.sh` and asserts on its text
   (official Docker repo, marker path). It's the only check on the guest script.
 
 ## Conventions
