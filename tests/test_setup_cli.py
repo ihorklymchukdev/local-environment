@@ -120,21 +120,19 @@ def test_uninstall_cleans_up_local_state_even_when_destroy_fails(monkeypatch):
     assert not cache_dir.exists(), "the cache must be removed even if destroy fails"
 
 
-def test_uninstall_purge_removes_state_db_and_the_vm_directory(monkeypatch):
-    # Spec §8 names both explicitly; state.db and the vhdx are the two things
-    # that survive an uninstall and confuse the next install.
+def test_uninstall_purge_removes_the_vm_directory(monkeypatch):
+    # The multi-gigabyte vhdx is what survives a failed destroy and fills the
+    # disk. Project state is no longer host-side at all -- it lives inside the
+    # VM at /opt/omelet/state.db and goes with it.
     from host.providers import default_install_dir
 
     monkeypatch.setattr(cli, "_provider_factory", lambda: FailingDestroyProvider())
     install_dir = default_install_dir()
     install_dir.mkdir(parents=True, exist_ok=True)
     (install_dir / "ext4.vhdx").write_text("x")
-    state_db = install_dir.parent / "state.db"
-    state_db.write_text("x")
 
     runner.invoke(cli.app, ["uninstall", "--purge"])
 
-    assert not state_db.exists(), "state.db must not survive a purge"
     assert not install_dir.exists(), "the VM directory must not survive a purge"
 
 

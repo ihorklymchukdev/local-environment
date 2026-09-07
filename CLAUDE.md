@@ -34,9 +34,10 @@ host platforms, so everything above the guest OS is platform-independent. The OS
 into the two provider classes.
 
 ```
-host CLI (typer)  →  VmProvider.exec()  →  guest: dockerd + traefik + project containers
-                                                   /opt/omelet/projects/<id>/
-host localhost:39080 ──────────────────────────→  traefik :39080 → routes by Host header
+host CLI (typer)  →  AgentClient (urllib)  →  127.0.0.1:39099 → agent (FastAPI in the VM)
+                  →  VmProvider.exec()     →  guest: dockerd, the token read, bootstrap
+                                              /opt/omelet/projects/<id>/
+host localhost:39080 ─────────────────────────→  traefik :39080 → routes by Host header
 ```
 
 ### Hard invariant: no platform branching outside `host/providers/`
@@ -54,6 +55,11 @@ Do not add an `if windows` anywhere else — push the difference into a provider
 - `host/providers/` — `Wsl2Provider` (shells `wsl.exe`), `LimaProvider` (shells `limactl`).
   Both take an injectable `runner` callable (defaults to `subprocess.run(..., capture_output=True)`),
   which is what makes them unit-testable.
+- `host/client.py` — the only way the host reaches project logic: `AgentClient` over stdlib
+  `urllib.request` (the host is PyInstaller-frozen, so it may never gain an HTTP dependency).
+  It reads `/opt/omelet/agent.token` through `provider.exec()`, turns every non-2xx body into
+  `AgentError(code, message, status)`, a refused connection into `AgentUnavailableError`, and a
+  failed job into `JobFailedError` carrying the guest's own stderr.
 - `agent/core/` — all platform-free logic: compose parsing, web detection, Traefik overlay
   generation, project identity, failure classification, guest lifecycle, sqlite state.
 - `host/provision/` — `bootstrap.sh`, the only host-side asset pushed into the VM alongside
@@ -78,9 +84,14 @@ Do not add an `if windows` anywhere else — push the difference into a provider
 
 ### Things that will bite you
 
-- **Nothing is staged on the host.** `push_project` tars the local dir in memory, base64-encodes it,
-  and pipes it through `bash -lc … base64 -d | tar -xzf -` in the guest. base64 is deliberate: it
-  avoids quoting/newline mangling through `wsl -- bash -lc`. `bootstrap._push_file` does the same.
+- **Project files travel over HTTP, not the command line.** `AgentClient.upload_directory` tars the
+  local directory into a temp file and POSTs it as a raw `application/gzip` body. The old
+  `lifecycle.push_project` (base64 through `bash -lc`, and its ~24 KB ceiling) survives only for
+  `host/core/install.py::verify_step` until Task 12 rewrites it. `bootstrap._push_file` still
+  base64s its two assets through `bash -lc`: it runs before the agent exists.
+- **The host CLI holds no project logic.** Compose parsing, web detection, URLs and project state
+  are all agent-side; `host/cli.py` creates the project, uploads it, starts a job, polls, and prints
+  what comes back. Its error messages are the agent's own sentences — never a status code.
 - **The user's `docker-compose.yml` is never modified.** A generated `.omelet/overlay.yml` adds the
   Traefik labels and the external `edge` network, and compose is invoked with both `-f` files.
   `compose ps` is invoked with only the base file.

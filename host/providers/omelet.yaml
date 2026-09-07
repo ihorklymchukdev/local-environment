@@ -12,3 +12,7 @@ mounts: []
 portForwards:
   - guestPort: 39080
     hostPort: 39080
+  # The agent's API. The host CLI dials 127.0.0.1:39099 on both platforms;
+  # WSL2 forwards it automatically, Lima only through this list.
+  - guestPort: 39099
+    hostPort: 39099

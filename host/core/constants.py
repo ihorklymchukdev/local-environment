@@ -13,6 +13,9 @@ script cannot end up pointing at different files.
 GUEST_ROOT = "/opt/omelet"
 GUEST_PROJECTS = f"{GUEST_ROOT}/projects"
 AGENT_PORT = 39099
+# The host only needs the domain to hand the installer's smoke test a value;
+# every project URL it prints comes from the agent's own payload.
+DEFAULT_DOMAIN = "127-0-0-1.sslip.io"
 VERIFY_PROJECT_ID = "omelet-selftest"
 
 # Bootstrap is purely host-side provisioning; the agent never reads any of these.

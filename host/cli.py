@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+
 import typer
 
 from host.core.diagnose import render_diagnosis
@@ -10,6 +12,33 @@ _provider_factory = get_provider  # tests override this
 
 def _provider():
     return _provider_factory()
+
+
+def _default_client():
+    from host.client import AgentClient
+    return AgentClient.for_provider(_provider())
+
+
+_client_factory = _default_client  # tests override this
+
+
+def _client():
+    return _client_factory()
+
+
+@contextmanager
+def _agent_errors():
+    """Every failure the agent can report is already a sentence written for a
+    user; printing a traceback or a status code over it loses the only text
+    that says what went wrong."""
+    from host.client import (AgentError, AgentUnavailableError, JobFailedError,
+                             JobTimeoutError)
+    try:
+        yield
+    except (AgentError, AgentUnavailableError, JobFailedError,
+            JobTimeoutError) as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=1)
 
 
 @app.callback()
@@ -79,82 +108,84 @@ from pathlib import Path as _Path
 @app.command()
 def up(directory: str = typer.Argument(".", help="Project directory with a docker-compose.yml")):
     """Bring a compose project up and print its URL(s)."""
-    import yaml
-    from agent.core import constants
-    from agent.core.project import load_project, STARTED_OK
-    from agent.core.lifecycle import push_project, compose_up
-    from agent.core.state import State
-    from host.providers import default_install_dir
+    from host.client import JobFailedError, project_id_for
 
     local = _Path(directory).resolve()
-    compose_dict = yaml.safe_load((local / "docker-compose.yml").read_text()) or {}
-    pyml_path = local / ".omelet" / "project.yml"
-    pyml = yaml.safe_load(pyml_path.read_text()) if pyml_path.exists() else None
-    project = load_project(compose_dict, pyml, local.name)
-
-    p = _provider()
-    push_project(p, project.id, local)
-    status, urls, detail = compose_up(p, project, local, constants.DEFAULT_DOMAIN)
-
-    state = State(default_install_dir().parent / "state.db")
-    state.add_project(project.id, f"{constants.GUEST_PROJECTS}/{project.id}",
-                      constants.DEFAULT_DOMAIN,
-                      status="running" if status == STARTED_OK else "error")
-
-    if status == STARTED_OK:
-        for u in urls:
-            typer.echo(f"  {u}")
-    else:
-        typer.echo(f"Project status: {status}. Run `omelet logs {project.id}`.")
-        if detail:
-            typer.echo(detail)
+    if not (local / "docker-compose.yml").is_file():
+        # Checked here so an empty folder is not registered as a project the
+        # agent then has to refuse.
+        typer.echo(f"There is no docker-compose.yml in {local}.", err=True)
         raise typer.Exit(code=1)
+    project_id = project_id_for(local.name)
+
+    with _agent_errors():
+        client = _client()
+        client.ensure_project(project_id)
+        client.upload_directory(project_id, local)
+        typer.echo(f"Starting {project_id} in the VM…")
+        try:
+            job = client.wait_for_job(client.project_up(project_id))
+        except JobFailedError as e:
+            status = e.result.get("status", "failed")
+            typer.echo(f"Project status: {status}. "
+                       f"Run `omelet logs {project_id}`.", err=True)
+            if str(e):
+                typer.echo(str(e), err=True)
+            raise typer.Exit(code=1)
+        for url in job.get("result", {}).get("urls", []):
+            typer.echo(f"  {url}")
 
 
 @app.command()
 def down(project_id: str):
     """Stop a project's containers."""
-    from agent.core.lifecycle import compose_down
-    compose_down(_provider(), project_id)
+    with _agent_errors():
+        client = _client()
+        # Waited on, not fired and forgotten: `down` reporting success while
+        # the containers are still stopping is a lie the next command trips on.
+        client.wait_for_job(client.project_down(project_id))
     typer.echo(f"{project_id} stopped.")
 
 
 @app.command()
 def status():
     """List known projects and their status."""
-    from agent.core.state import State
-    from agent.core import constants
-    from host.providers import default_install_dir
-    state = State(default_install_dir().parent / "state.db")
-    rows = state.list_projects()
-    if not rows:
+    with _agent_errors():
+        projects = _client().list_projects()
+    if not projects:
         typer.echo("No projects.")
         return
-    for r in rows:
-        typer.echo(f"{r['id']:<20} {r['status']:<10} "
-                   f"http://{r['id']}.{r['domain']}:{constants.EDGE_PORT}")
+    for project in projects:
+        urls = project.get("urls") or []
+        typer.echo(f"{project['id']:<20} {project['status']:<16} "
+                   f"{urls[0] if urls else ''}".rstrip())
+        for url in urls[1:]:
+            typer.echo(f"    {url}")
+        problem = project.get("problem")
+        if problem:
+            typer.echo(f"    problem: {problem['message']}")
 
 
 @app.command()
 def logs(project_id: str, service: str = typer.Option(None)):
     """Show a project's container logs."""
-    from agent.core.lifecycle import project_logs
-    result = project_logs(_provider(), project_id, service)
-    if not result.ok:
-        typer.echo(result.stderr.strip() or "could not read the logs", err=True)
-        raise typer.Exit(1)
-    typer.echo(result.stdout)
+    with _agent_errors():
+        text = _client().logs(project_id, service)
+    typer.echo(text)
 
 
 @app.command()
 def destroy(project_id: str):
     """Stop and forget a project."""
-    from agent.core.lifecycle import compose_down
-    from agent.core.state import State
-    from host.providers import default_install_dir
-    compose_down(_provider(), project_id)
-    State(default_install_dir().parent / "state.db").remove_project(project_id)
+    with _agent_errors():
+        result = _client().delete_project(project_id)
     typer.echo(f"{project_id} destroyed.")
+    if not result.get("stopped", True):
+        # The project row is gone either way, so a failed `compose down` here
+        # leaves containers running that nothing will list again.
+        typer.echo("Its containers may still be running in the VM: "
+                   f"{result.get('detail', '').strip()}", err=True)
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -162,7 +193,7 @@ def setup(resume: bool = typer.Option(False, "--resume"),
           headless: bool = typer.Option(False, "--headless")):
     """Set up everything: check the host, create the VM, install Docker."""
     import sys as _sys
-    from agent.core import constants
+    from host.core import constants
     from host.core.install import (
         RESUME_NOTICE, VERIFY_TEMPLATE, DeadEnd, InstallError, InstallState, Progress,
         RebootRequired, default_steps, run_install,
@@ -234,10 +265,8 @@ def uninstall(purge: bool = typer.Option(False, "--purge")):
     # The VM's own directory: wsl --unregister normally empties it, but a
     # failed or partial destroy leaves a multi-gigabyte vhdx behind.
     shutil.rmtree(install_dir, ignore_errors=True)
-    try:
-        (root / "state.db").unlink(missing_ok=True)
-    except OSError as e:
-        typer.echo(f"Could not remove {root / 'state.db'} ({e}).")
+    # No host-side state.db to remove any more: project state lives in the VM
+    # at /opt/omelet/state.db and goes with the VM.
 
     if destroy_error is not None:
         typer.echo(f"The VM could not be removed ({destroy_error}). "
