@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import re
 import tomllib
 from pathlib import Path
@@ -28,3 +29,25 @@ def test_host_dependencies_exclude_web_framework():
     names = _dependency_names()
     assert "fastapi" not in names
     assert "uvicorn" not in names
+
+
+def test_host_declares_no_yaml_parser():
+    # Compose files are parsed by the agent; host/providers/omelet.yaml is only
+    # ever handed to limactl as a path. A declared parser invites the next
+    # host-side parse of a file the agent owns.
+    assert "pyyaml" not in _dependency_names()
+
+
+def test_no_host_module_imports_yaml():
+    # The dependency assertion above is only half of it: an import that is not
+    # declared still works in a dev checkout (the agent package installs
+    # pyyaml) and only fails in the frozen binary, on a user's machine.
+    offenders = []
+    for py in sorted((REPO_ROOT / "host").rglob("*.py")):
+        for node in ast.walk(ast.parse(py.read_text())):
+            names = ([a.name for a in node.names] if isinstance(node, ast.Import)
+                     else [node.module or ""] if isinstance(node, ast.ImportFrom)
+                     and node.level == 0 else [])
+            if any(n == "yaml" or n.startswith("yaml.") for n in names):
+                offenders.append(f"{py}:{node.lineno}")
+    assert not offenders, f"host/ imported yaml: {offenders}"
