@@ -57,3 +57,27 @@ def test_compose_up_carries_the_guest_error_when_the_stack_fails():
     status, _urls, detail = compose_up(FailingProvider(), proj, "/tmp", "d.io")
     assert status == FAILED_TO_START
     assert "network edge" in detail
+
+
+def test_compose_up_reports_a_failed_overlay_write_instead_of_starting_the_stack():
+    # exec() never raises, so an unchecked overlay write turns into a project
+    # that comes up with no Traefik labels: no route, and nothing anywhere
+    # saying why. The write has to be the thing that fails, loudly.
+    from agent.core.exec import Completed
+    from agent.core.project import FAILED_TO_START
+
+    class OverlayFails(FakeProvider):
+        def exec(self, argv, *, root=False):
+            self.execs.append(argv)
+            if "overlay.yml" in " ".join(argv):
+                return Completed(1, "", "bash: /opt/omelet/projects/myproj: Permission denied")
+            return Completed(0, "[]", "")
+
+    p = OverlayFails()
+    proj = Project(id="myproj", webs=[WebSpec("web", 80)])
+    status, _urls, detail = compose_up(p, proj, "/tmp", "d.io")
+
+    assert status == FAILED_TO_START
+    assert "Permission denied" in detail
+    assert not any(a[-2:] == ["up", "-d"] for a in p.execs), \
+        "compose must not start a stack whose overlay was never written"

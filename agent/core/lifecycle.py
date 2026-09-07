@@ -10,7 +10,7 @@ from . import constants
 # Absolute path: Docker Desktop's WSL integration puts its own docker CLI on
 # PATH, and a bare `docker` would send this VM's projects to Desktop's engine.
 DOCKER = "/usr/bin/docker"
-from .project import Project, STARTED_OK, classify, overlay_yaml
+from .project import Project, FAILED_TO_START, STARTED_OK, classify, overlay_yaml
 
 
 def _guest_dir(project_id: str) -> str:
@@ -38,13 +38,13 @@ def push_project(provider, project_id: str, local_dir) -> None:
                    f"tar -xzf - -C {d}"], root=True)
 
 
-def _write_overlay(provider, project: Project, domain: str) -> None:
+def _write_overlay(provider, project: Project, domain: str):
     d = _guest_dir(project.id)
     text = overlay_yaml(project, domain)
     encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
-    provider.exec(["bash", "-lc",
-                   f"mkdir -p {d}/.omelet && echo {encoded} | base64 -d "
-                   f"> {d}/.omelet/overlay.yml"], root=True)
+    return provider.exec(["bash", "-lc",
+                          f"mkdir -p {d}/.omelet && echo {encoded} | base64 -d "
+                          f"> {d}/.omelet/overlay.yml"], root=True)
 
 
 def _urls(project: Project, domain: str) -> list[str]:
@@ -57,7 +57,13 @@ def compose_up(provider, project: Project, local_dir, domain: str):
     """Returns (status, urls, detail). `detail` carries the guest's own output
     when the stack did not start, so callers never have to report a bare status
     code that no one can act on."""
-    _write_overlay(provider, project, domain)
+    written = _write_overlay(provider, project, domain)
+    if not written.ok:
+        # exec() never raises. Starting the stack anyway would produce a project
+        # with no Traefik labels: no route, and no error naming the cause.
+        return (FAILED_TO_START, _urls(project, domain),
+                (written.stderr or written.stdout).strip()
+                or "could not write the Traefik overlay inside the VM")
     up = provider.exec(_compose_argv(project.id), root=True)
     ps = provider.exec([DOCKER, "compose", "-f",
                         f"{_guest_dir(project.id)}/docker-compose.yml",

@@ -55,7 +55,18 @@ chgrp -R docker /opt/omelet
 chmod -R g+rwX /opt/omelet
 find /opt/omelet -type d -exec chmod g+s {} +
 
-# 5. traefik + the agent, as one compose stack.
+# 5. this VM's real docker GID, for stack.yml's group_add.
+# The chgrp above used whatever GID this VM's docker group has, while the agent
+# image bakes in 999 -- where those differ the agent can write neither
+# /opt/omelet nor the socket. Compose reads .env from the directory holding the
+# compose file, so writing it here is all the wiring needed.
+if ! DOCKER_GID="$(getent group docker | cut -d: -f3)" || [[ -z "$DOCKER_GID" ]]; then
+  echo 'no docker group in this VM after installing docker-ce' >&2
+  exit 1
+fi
+printf 'OMELET_DOCKER_GID=%s\n' "$DOCKER_GID" > /opt/omelet/.env
+
+# 6. traefik + the agent, as one compose stack.
 # Always pull: this is how an agent update reaches an already-provisioned VM,
 # so both the first install and every update need the network.
 test -f /opt/omelet/stack.yml || { echo 'stack.yml was never pushed to the VM' >&2; exit 1; }
@@ -66,6 +77,6 @@ if ! /usr/bin/docker compose -f /opt/omelet/stack.yml pull; then
 fi
 /usr/bin/docker compose -f /opt/omelet/stack.yml up -d
 
-# 6. marker, last: a failure above must leave no marker behind.
+# 7. marker, last: a failure above must leave no marker behind.
 echo "$WANT_VERSION" > /opt/omelet/.bootstrapped
 echo "bootstrap complete at version $WANT_VERSION"

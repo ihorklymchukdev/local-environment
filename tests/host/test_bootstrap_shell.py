@@ -1,6 +1,8 @@
-import shutil
+import re
 import subprocess
 from pathlib import Path
+
+from host.core import constants
 
 BOOTSTRAP = Path("host/provision/bootstrap.sh")
 
@@ -17,9 +19,11 @@ def test_bootstrap_pins_docker_official_repo_not_docker_io():
     assert "docker.io" not in text
 
 
-def test_bootstrap_writes_version_marker():
-    text = BOOTSTRAP.read_text()
-    assert "/opt/omelet/.bootstrapped" in text
+def test_bootstrap_writes_the_marker_path_the_host_reads_back():
+    # bootstrap.py polls constants.BOOTSTRAP_MARKER after the script returns.
+    # Two independent literals here would let the script write a marker the
+    # host never finds, reported as "succeeded but left no version marker".
+    assert constants.BOOTSTRAP_MARKER in BOOTSTRAP.read_text()
 
 
 def test_bootstrap_guards_on_the_package_not_the_docker_binary():
@@ -32,14 +36,17 @@ def test_bootstrap_guards_on_the_package_not_the_docker_binary():
     assert not any("command -v docker" in l for l in code)
 
 
+# A word is being *run* only at the start of a line or right after a pipe,
+# `&&`/`||`, `;`, `(`, `!`, or then/else/do. Anchoring on the line start alone
+# missed `... || docker network create`, which is the same bug one operator in.
+_BARE_DOCKER = re.compile(r"(?:^|[|&;(!]|\b(?:then|else|do)\s)\s*docker\b")
+
+
 def test_bootstrap_invokes_docker_by_absolute_path():
     # A bare `docker` would reach Docker Desktop's CLI when its WSL integration
     # is on, sending this VM's containers to Desktop's engine instead.
-    import re
-    for line in BOOTSTRAP.read_text().splitlines():
-        stripped = line.strip()
-        if re.match(r"^(\|\||&&)?\s*docker\s", stripped):
-            raise AssertionError(f"bare docker invocation: {stripped}")
+    for line in _commands():
+        assert not _BARE_DOCKER.search(line), f"bare docker invocation: {line}"
 
 
 def test_smoke_test_template_publishes_no_host_port():
@@ -71,7 +78,8 @@ def test_bootstrap_brings_the_stack_up_with_compose_not_an_inline_container():
     # Traefik and the agent are one compose stack now; an inline `docker run`
     # would start a Traefik outside it that compose can never upgrade or stop.
     commands = _commands()
-    assert any("compose -f /opt/omelet/stack.yml" in l and " up -d" in l for l in commands)
+    assert any(f"compose -f {constants.GUEST_STACK}" in l and " up -d" in l
+               for l in commands)
     assert not any("docker run" in l for l in commands), "the inline traefik container is gone"
     assert not any("docker rm -f traefik" in l for l in commands)
     assert not any("traefik.yml" in l for l in commands)
@@ -80,24 +88,44 @@ def test_bootstrap_brings_the_stack_up_with_compose_not_an_inline_container():
 def test_bootstrap_always_pulls_before_bringing_the_stack_up():
     # Always pulling is the delivery decision: it is how an agent update reaches
     # an already-bootstrapped VM. `up -d` alone would keep running a stale image.
-    assert _index_of("compose -f /opt/omelet/stack.yml pull") < _index_of(" up -d")
+    assert _index_of(f"compose -f {constants.GUEST_STACK} pull") < _index_of(" up -d")
 
 
 def test_bootstrap_makes_opt_omelet_writable_before_the_agent_starts():
     # The agent runs as a non-root user whose only shared credential with the VM
     # is the docker group. Root-owned 0755 here means it cannot create
     # /opt/omelet/state.db, and `restart: always` then loops it forever.
-    assert _index_of("chgrp") < _index_of(" up -d")
+    up = _index_of(" up -d")
+    assert _index_of("chgrp") < up
     assert any("docker" in l for l in _commands() if "chgrp" in l), \
         "the group the agent actually belongs to"
-    assert any("g+s" in l for l in _commands()), \
+    # g+rwX is the line that grants the access; chgrp alone leaves 0755 and the
+    # agent still cannot create state.db. X, not x, so files stay non-executable.
+    assert _index_of("g+rwX") < up
+    assert _index_of("g+s") < up, \
         "setgid, or project directories the agent creates lose the group"
+    assert _index_of("mkdir -p " + constants.GUEST_PROJECTS) < _index_of("chgrp")
 
 
 def test_bootstrap_writes_the_marker_last():
     # bootstrap.py treats a missing marker as failure, which only works while the
     # marker is the final step: written earlier, a failed pull looks bootstrapped.
     commands = _commands()
-    marker = _index_of("> /opt/omelet/.bootstrapped")
+    marker = _index_of(f"> {constants.BOOTSTRAP_MARKER}")
     assert marker > _index_of(" up -d")
     assert marker >= len(commands) - 2, "nothing that can fail may run after the marker"
+
+
+def test_bootstrap_writes_this_vms_real_docker_gid_for_the_stack():
+    # stack.yml's group_add defaults to 999 and the image bakes in 999, but the
+    # chgrp above uses whatever GID this VM's docker group actually has. On a VM
+    # where they differ the agent can write neither /opt/omelet nor the socket
+    # -- the same crash-loop the chgrp exists to prevent, one step over.
+    commands = _commands()
+    env_line = _index_of(constants.GUEST_ENV)
+    assert env_line < _index_of(" up -d"), "compose reads .env when it starts"
+    assert any("OMELET_DOCKER_GID" in l for l in commands)
+    assert any("getent group docker" in l for l in commands), \
+        "the GID must be read from the VM, not assumed"
+    assert not any(re.search(r"OMELET_DOCKER_GID=[0-9]", l) for l in commands), \
+        "a literal GID is the bug this guards against"

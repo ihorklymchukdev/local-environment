@@ -6,7 +6,7 @@ from pathlib import Path
 
 from host.core import constants
 
-_GUEST_DIR = "/opt/omelet/bin"
+_GUEST_DIR = f"{constants.GUEST_ROOT}/bin"
 _GUEST_SCRIPT = f"{_GUEST_DIR}/bootstrap.sh"
 # Repo root from source, sys._MEIPASS from a frozen build -- both layouts put
 # the bundled assets under the same host/ and agent/ prefixes.
