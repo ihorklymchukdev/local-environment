@@ -3,14 +3,21 @@ from __future__ import annotations
 import uvicorn
 
 from ..core.config import AgentConfig
+from ..core.migrate import SchemaTooNew
 from .app import create_app
 
 
 def main() -> None:
     config = AgentConfig.from_env()
+    try:
+        app = create_app(config=config)
+    except SchemaTooNew as e:
+        # `restart: always` loops this container, so the log is all anyone has
+        # to go on: one line that says what to do, not a traceback.
+        raise SystemExit(f"omelet-agent will not start: {e}") from None
     # Defaults to 0.0.0.0 because the host reaches the agent through the VM's
     # port mapping; narrowing the bind address is a later task's decision.
-    uvicorn.run(create_app(config=config), host=config.bind_host, port=config.port)
+    uvicorn.run(app, host=config.bind_host, port=config.port)
 
 
 if __name__ == "__main__":

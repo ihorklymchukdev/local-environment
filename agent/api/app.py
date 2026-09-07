@@ -42,28 +42,6 @@ class ApiError(Exception):
         self.status = status
 
 
-class ThreadLocalState:
-    """`State` opens one sqlite connection, and sqlite3 refuses a connection
-    used from a thread other than the one that opened it. FastAPI runs sync
-    routes in a threadpool and jobs run on their own threads, so each thread
-    gets its own `State` over the same file."""
-
-    def __init__(self, db_path):
-        self._db_path = db_path
-        self._local = threading.local()
-        self._bound()  # fail here, at startup, if the file is unusable
-
-    def _bound(self) -> State:
-        state = getattr(self._local, "state", None)
-        if state is None:
-            state = State(self._db_path)
-            self._local.state = state
-        return state
-
-    def __getattr__(self, name):
-        return getattr(self._bound(), name)
-
-
 def _busy(project_id: str) -> "ApiError":
     return ApiError("project_busy",
                     f"another operation on '{project_id}' is still running", 409)
@@ -138,7 +116,7 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
     config = config or AgentConfig.from_env()
     runner = runner or LocalRunner()
     http_probe = http_probe or default_probe
-    state = state if state is not None else ThreadLocalState(config.state_db)
+    state = state if state is not None else State(config.state_db)
     jobs = jobs or JobRegistry()
     locks = ProjectLocks()
 

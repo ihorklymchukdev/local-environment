@@ -48,3 +48,36 @@ def test_remove_project_cascades_forwards(tmp_path):
     assert s.get_project("p") is None
     # forwards must be gone: the freed host port is reusable
     assert s.allocate_host_port(start=39100, end=39102) == 39100
+
+
+def test_state_serves_threads_other_than_the_one_that_opened_it(tmp_path):
+    # sqlite3 refuses a connection used off its creating thread, and every
+    # route runs in FastAPI's threadpool while jobs run on threads of their
+    # own. Two writers on one row must also leave a value that was actually
+    # written, not a half-applied one.
+    import threading
+
+    s = State(tmp_path / "s.db")
+    s.add_project("p", "/g/p", "p.d.io")
+    start = threading.Barrier(6)
+    errors: list[BaseException] = []
+
+    def hammer(n: int):
+        try:
+            start.wait(5)
+            for _ in range(20):
+                s.set_status("p", f"status-{n}")
+                s.set_problem("p", f"code-{n}", f"message-{n}")
+                assert s.get_project("p") is not None
+                s.list_projects()
+        except BaseException as e:  # noqa: BLE001 - reported, not swallowed
+            errors.append(e)
+
+    threads = [threading.Thread(target=hammer, args=(n,)) for n in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+
+    assert not errors, f"state failed off-thread: {errors}"
+    assert s.get_project("p")["status"] in {f"status-{n}" for n in range(6)}
