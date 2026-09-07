@@ -1,7 +1,7 @@
 from agent.core.lifecycle import compose_up, _compose_argv
 from agent.core.project import Project, STARTED_OK
 from agent.core.detect import WebSpec
-from host.core.provider import Completed
+from agent.core.exec import Completed
 from agent.core import constants
 
 
@@ -43,7 +43,7 @@ def test_compose_up_returns_url_and_status(tmp_path):
 def test_compose_up_carries_the_guest_error_when_the_stack_fails():
     # A bare status like "failed_to_start" is unactionable: the reason lives in
     # compose's own stderr, which used to be discarded.
-    from host.core.provider import Completed
+    from agent.core.exec import Completed
     from agent.core.project import FAILED_TO_START
 
     class FailingProvider(FakeProvider):

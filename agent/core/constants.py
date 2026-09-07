@@ -1,4 +1,5 @@
 EDGE_PORT = 39080
+AGENT_PORT = 39099
 BOOTSTRAP_VERSION = 3
 GUEST_ROOT = "/opt/omelet"
 GUEST_PROJECTS = "/opt/omelet/projects"

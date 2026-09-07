@@ -73,9 +73,16 @@ def compose_down(provider, project_id: str):
                           "-f", f"{d}/.omelet/overlay.yml", "down"], root=True)
 
 
-def project_logs(provider, project_id: str, service: str | None = None) -> str:
+def logs_argv(project_id: str, service: str | None = None, *,
+              follow: bool = False) -> list[str]:
     d = _guest_dir(project_id)
     argv = [DOCKER, "compose", "-f", f"{d}/docker-compose.yml", "logs", "--no-color"]
+    if follow:
+        argv.append("--follow")
     if service:
         argv.append(service)
-    return provider.exec(argv, root=True).stdout
+    return argv
+
+
+def project_logs(provider, project_id: str, service: str | None = None) -> str:
+    return provider.exec(logs_argv(project_id, service), root=True).stdout

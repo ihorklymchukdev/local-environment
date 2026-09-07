@@ -58,8 +58,14 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   generation, project identity, failure classification, guest lifecycle, sqlite state.
 - `host/provision/` — assets pushed into the VM: `bootstrap.sh` (docker-ce from the official repo,
   `edge` network, Traefik container) and `traefik.yml`.
-- `agent/api/server.py` — minimal JSON-RPC over `http.server` on 127.0.0.1:39099. `dispatch()` is
-  pure and testable; `serve()` is the transport.
+- `agent/api/` — the FastAPI app the host talks to. `app.py::create_app(config, runner, state)` is
+  a factory on purpose (no module-level `app`, so importing it opens no sqlite file); `jobs.py` is
+  the in-process job registry that keeps slow compose work off the request; `__main__.py` is the
+  uvicorn entrypoint on `0.0.0.0:39099`. Every non-2xx body is
+  `{"error": {"code": ..., "message": ...}}`, produced by one exception handler.
+- `agent/core/exec.py` — `LocalRunner`, the in-VM twin of `VmProvider.exec`: same `Completed`
+  contract, never raises. `agent/core/config.py` — `AgentConfig`, the only place the domain and
+  edge port may come from.
 
 ### Things that will bite you
 
