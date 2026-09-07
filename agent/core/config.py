@@ -14,10 +14,12 @@ class AgentConfig:
     """Everything the agent is allowed to vary at run time. Nothing else may
     hardcode the domain or the entry port.
 
-    In production `projects_root` must stay `/opt/omelet/projects`: compose
-    files are parsed here but the bind-mount paths inside them are resolved by
-    dockerd on the VM, and `core/lifecycle.py` builds the guest paths it hands
-    to compose from `constants.GUEST_PROJECTS`.
+    `projects_root` is the single source of truth for where projects live:
+    uploads land there and `core/lifecycle.py` builds every compose `-f` path
+    from the directory the API hands it, never from a constant of its own.
+    In production it must stay under `/opt/omelet`, which is bind-mounted into
+    the agent container at the identical path -- compose files are parsed here
+    but the bind-mount paths inside them are resolved by dockerd on the VM.
     """
 
     bind_host: str = "0.0.0.0"

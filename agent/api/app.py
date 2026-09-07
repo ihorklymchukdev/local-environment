@@ -416,7 +416,7 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
         # build, so this is the one compose call that stays synchronous. The
         # lock stops it removing the state row under a running `up`.
         with locks.held(project_id):
-            result = lifecycle.compose_down(runner, project_id)
+            result = lifecycle.compose_down(runner, project_dir(project_id))
             state.remove_project(project_id)
         return {"id": project_id, "stopped": result.ok,
                 "detail": "" if result.ok else (result.stderr or result.stdout).strip()}
@@ -433,13 +433,14 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
         def work(write):
             try:
                 write(f"compose up {project_id}\n")
-                status, _lifecycle_urls, detail = lifecycle.compose_up(
+                status, detail = lifecycle.compose_up(
                     runner, project, directory, domain)
                 diagnosis = None
                 if status == STARTED_OK:
                     write("waiting for the project to answer through Traefik\n")
                     diagnosis = diagnose(
-                        runner, project, domain, edge_port=config.edge_port,
+                        runner, project, domain, directory=directory,
+                        edge_port=config.edge_port,
                         traefik_host=config.traefik_host, http_probe=http_probe,
                         timeout=config.ready_timeout)
                 state.set_status(project_id, status)
@@ -474,7 +475,8 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
         def work(write):
             try:
                 write(f"compose down {project_id}\n")
-                result = lifecycle.compose_down(runner, project_id)
+                result = lifecycle.compose_down(runner,
+                                                project_dir(project_id))
                 if not result.ok:
                     raise JobFailed((result.stderr or result.stdout).strip()
                                     or "compose down failed")
@@ -490,13 +492,14 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
                      service: str | None = None):
         require_row(project_id)
         if not follow:
-            result = lifecycle.project_logs(runner, project_id, service)
+            result = lifecycle.project_logs(runner, project_dir(project_id),
+                                            service)
             if not result.ok:
                 raise ApiError("logs_unavailable",
                                (result.stderr or result.stdout).strip()
                                or "docker compose logs failed", 409)
             return PlainTextResponse(result.stdout, media_type=TEXT)
-        argv = lifecycle.logs_argv(project_id, service, follow=True)
+        argv = lifecycle.logs_argv(project_dir(project_id), service, follow=True)
         return StreamingResponse(runner.stream(argv, root=True), media_type=TEXT)
 
     @app.get("/jobs/{job_id}")

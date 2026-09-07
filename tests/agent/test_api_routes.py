@@ -81,7 +81,9 @@ class FakeRunner:
         return iter(list(self.stream_lines))
 
     def argv_containing(self, needle):
-        return [a for a in self.calls if needle in " ".join(a)]
+        # Matched against the argv words, not the joined string: project paths
+        # are real directories here, and a tmp_path can contain any substring.
+        return [a for a in self.calls if needle in a]
 
 
 class FakeProbe:
@@ -279,6 +281,24 @@ def test_up_returns_a_job_id_and_runs_compose_with_both_files(env):
     assert up.count("-f") == 2 and up[-2:] == ["up", "-d"]
     ps = env.runner.argv_containing("ps")[-1]
     assert ps.count("-f") == 1, "compose ps runs against the base file only"
+
+
+def test_compose_runs_against_the_configured_projects_root(env):
+    # The trap this closes: the API wrote uploads to config.projects_root while
+    # lifecycle built every compose `-f` path from a constant of its own, so a
+    # non-default root uploaded to one directory and ran compose against
+    # another, with nothing anywhere saying so.
+    _create(env)
+    _write_compose(env, "blog")
+    _run_to_completion(env, env.client.post("/projects/blog/up"))
+    env.client.get("/projects/blog/logs")
+    env.client.delete("/projects/blog")
+
+    paths = [word for argv in env.runner.calls for word in argv if ".yml" in word]
+    assert paths, "no compose file reached the runner at all"
+    for word in paths:
+        assert str(env.config.projects_root) in word, word
+        assert "/opt/omelet/projects" not in word, word
 
 
 def test_up_without_a_compose_file_is_compose_missing(env):

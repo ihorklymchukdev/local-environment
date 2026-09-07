@@ -115,10 +115,10 @@ def parse_listeners(proc_net: str) -> list[Listener]:
     return listeners
 
 
-def _listeners(runner, project_id: str, service: str) -> list[Listener] | None:
+def _listeners(runner, directory, service: str) -> list[Listener] | None:
     """None means the check itself could not run — a slim image with no `cat`,
     or a container that is already gone. Callers must hedge, never claim."""
-    cid = container_id(runner, project_id, service)
+    cid = container_id(runner, directory, service)
     if not cid:
         return None
     # /proc/net/tcp, not `ss`: a slim image has neither ss nor netstat, but
@@ -147,8 +147,8 @@ def _unreachable_message(web: WebSpec) -> str:
             f"`omelet logs` shows what it printed.")
 
 
-def _explain(runner, project_id: str, web: WebSpec) -> Diagnosis:
-    listeners = _listeners(runner, project_id, web.service)
+def _explain(runner, directory, web: WebSpec) -> Diagnosis:
+    listeners = _listeners(runner, directory, web.service)
     if listeners is None:
         return Diagnosis(SERVICE_UNREACHABLE, _unreachable_message(web))
     on_port = [listener for listener in listeners if listener.port == web.port]
@@ -160,6 +160,7 @@ def _explain(runner, project_id: str, web: WebSpec) -> Diagnosis:
 
 
 def diagnose(runner, project: Project, domain: str, *,
+             directory,
              edge_port: int = constants.EDGE_PORT,
              traefik_host: str = "traefik",
              http_probe=default_probe,
@@ -178,7 +179,7 @@ def diagnose(runner, project: Project, domain: str, *,
                      sleep=sleep, clock=clock)
     if status != _BAD_GATEWAY:
         return None
-    return _explain(runner, project.id, web)
+    return _explain(runner, directory, web)
 
 
 def answers(project: Project, domain: str, *,

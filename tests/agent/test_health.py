@@ -31,6 +31,9 @@ ESTABLISHED_ONLY = HEADER + (
     "00000000  1000        0 12345 1 0000000000000000 100 0 0 10 0\n")
 
 PROJECT = Project(id="blog", webs=[WebSpec(service="web", port=80)])
+# The project's directory, which the API layer resolves from
+# config.projects_root and hands down -- health never derives it itself.
+PROJECT_DIR = "/srv/projects/blog"
 
 
 class Clock:
@@ -86,6 +89,7 @@ class FakeRunner:
 
 def diagnose(runner, probe, clock, **kwargs):
     return health.diagnose(runner, PROJECT, "test.local",
+                           directory=PROJECT_DIR,
                            edge_port=41080, traefik_host="traefik",
                            http_probe=probe, sleep=clock.sleep,
                            clock=clock.monotonic, **kwargs)
@@ -199,7 +203,8 @@ def test_an_application_error_is_the_apps_answer_not_a_routing_fault():
 def test_a_project_with_no_web_service_is_never_probed():
     clock, probe = Clock(), Probe(502)
     result = health.diagnose(FakeRunner(), Project(id="worker", webs=[]),
-                             "test.local", http_probe=probe,
+                             "test.local", directory=PROJECT_DIR,
+                             http_probe=probe,
                              sleep=clock.sleep, clock=clock.monotonic)
     assert result is None
     assert probe.calls == []
