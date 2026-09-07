@@ -127,6 +127,17 @@ class AgentTooOld(RuntimeError):
     """The VM runs an older agent than this host was built against."""
 
 
+class AgentNotAccepted(RuntimeError):
+    """The agent is serving, but refuses every authenticated call and a
+    re-provision did not change that."""
+
+
+# The agent answers one of these when it has no usable token of its own, or
+# when the one this host is holding is not the one it started with. Neither
+# clears with time: the token is read once, at container startup.
+_TOKEN_CODES = frozenset({"agent_unconfigured", "unauthorized"})
+
+
 def _version_tuple(version: str) -> tuple[int, ...] | None:
     """The leading dotted integers, or None for anything that cannot be
     ordered -- a locally built image tagged `dev`, a git sha."""
@@ -169,23 +180,50 @@ def _version_once_serving(client, sleep, timeout: float) -> str:
 
 
 def agent_version_step(provider, *, client=None, expected: str | None = None,
-                       repair=None, sleep=time.sleep):
+                       repair=None, reconnect=None, sleep=time.sleep):
     """Bring the VM's agent up to the version this host expects, or say why not.
 
     `repair` re-provisions the guest stack (`compose pull && up -d`) and is
     tried once: without it the only exit from an older agent is destroying the
     VM, which discards every project in it.
+
+    `reconnect` is the same idea for an agent that is serving but refuses every
+    authenticated call. It re-provisions *and* recreates the agent container --
+    the token is read once at startup, so re-provisioning alone leaves the
+    running container refusing exactly the same calls -- then returns a client
+    holding the token the VM has now. Returning None keeps the current client.
     """
-    from host.client import AgentClient
+    from host.client import AgentClient, AgentError
     from host.core import constants
 
     expected = expected or constants.EXPECTED_AGENT_VERSION
     client = client or AgentClient.for_provider(provider)
     want = _version_tuple(expected)
-    found = client.version()
+    reconnected = False
+    try:
+        found = client.version()
+    except AgentError as e:
+        if e.code not in _TOKEN_CODES or reconnect is None:
+            raise
+        client = reconnect() or client
+        try:
+            found = _version_once_serving(client, sleep, AGENT_RESTART_TIMEOUT)
+        except AgentError as again:
+            if again.code not in _TOKEN_CODES:
+                raise
+            raise AgentNotAccepted(
+                "The Omelet service inside the virtual machine did not accept "
+                "this computer, and setting the virtual machine up again did "
+                f"not change that.\n{again.message}") from again
+        reconnected = True
     if _is_current(found, want):
+        if reconnected:
+            return ("The Omelet service in the virtual machine was not "
+                    "accepting this computer, and has been reconnected.")
         return None
-    if repair is not None:
+    # Not after a reconnect: that already re-provisioned the guest stack, and
+    # repeating it is minutes of pulling that cannot change the answer.
+    if repair is not None and not reconnected:
         repair()
         found = _version_once_serving(client, sleep, AGENT_RESTART_TIMEOUT)
         if _is_current(found, want):
@@ -318,9 +356,10 @@ _ACTIONS = {
     "bootstrap": "Docker could not be installed inside the virtual machine. The "
                  "detail above comes from inside the VM. Run setup again; if it "
                  "fails the same way twice, send us that text.",
-    "agent": "The Omelet service inside the virtual machine is out of date and "
-             "setup could not update it in place. Use Copy diagnostics and send "
-             "us the text.",
+    "agent": "The Omelet service inside the virtual machine could not be "
+             "brought up to date, or would not accept this computer — the "
+             "message above says which. Run setup again; if it fails the same "
+             "way twice, use Copy diagnostics and send us the text.",
     "verify": "The test project did not answer. Run setup again; if it fails a "
               "second time, use Copy diagnostics and send us the text.",
 }
@@ -358,7 +397,8 @@ def default_steps(provider, *, cache_dir, template_dir: Path, domain,
         # the routes it uses should say so in one sentence, not fail several
         # minutes into a compose run with a 404 on a route name.
         step("agent", lambda: agent_version_step(
-            provider, repair=lambda: _bootstrap(provider, force=True)),
+            provider, repair=lambda: _bootstrap(provider, force=True),
+            reconnect=lambda: _reconnect(provider)),
             always_run=True),
         step("verify", lambda: verify_step(provider, template_dir, domain),
              always_run=True),
@@ -369,3 +409,15 @@ def default_steps(provider, *, cache_dir, template_dir: Path, domain,
 def _bootstrap(provider, *, force: bool = False) -> None:
     from .bootstrap import bootstrap
     bootstrap(provider, force=force)
+
+
+def _reconnect(provider):
+    """Re-provision the guest, recreate the agent container so it re-reads the
+    token bootstrap.sh just repaired, and dial it with the token the VM holds
+    now (the client caches the one it was built with)."""
+    from host.client import AgentClient
+
+    from .bootstrap import restart_agent
+    _bootstrap(provider, force=True)
+    restart_agent(provider)
+    return AgentClient.for_provider(provider)

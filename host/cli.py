@@ -41,6 +41,18 @@ def _agent_errors():
         raise typer.Exit(code=1)
 
 
+@contextmanager
+def _vm_errors():
+    """The providers raise a plain RuntimeError carrying `wsl.exe`'s own words
+    when a VM operation fails. A traceback would bury the one line that says
+    what happened."""
+    try:
+        yield
+    except (RuntimeError, OSError) as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=1)
+
+
 @app.callback()
 def callback():
     """Omelet CLI."""
@@ -69,36 +81,40 @@ app.add_typer(vm, name="vm")
 def vm_create():
     """Create the VM and bootstrap Docker + Traefik inside it."""
     from host.core.bootstrap import bootstrap, BootstrapError
-    p = _provider()
-    if p.exists():
-        typer.echo("VM already exists; bootstrapping (idempotent).")
-    else:
-        typer.echo("Creating VM…")
-        p.create()
-    typer.echo("Installing Docker + Traefik in the VM (a few minutes)…")
-    try:
-        bootstrap(p)
-    except BootstrapError as e:
-        typer.echo(f"\nBootstrap failed.\n{e}")
-        raise typer.Exit(code=1)
+    with _vm_errors():
+        p = _provider()
+        if p.exists():
+            typer.echo("VM already exists; bootstrapping (idempotent).")
+        else:
+            typer.echo("Creating VM…")
+            p.create()
+        typer.echo("Installing Docker + Traefik in the VM (a few minutes)…")
+        try:
+            bootstrap(p)
+        except BootstrapError as e:
+            typer.echo(f"\nBootstrap failed.\n{e}")
+            raise typer.Exit(code=1)
     typer.echo("VM ready.")
 
 
 @vm.command("start")
 def vm_start():
-    _provider().start()
+    with _vm_errors():
+        _provider().start()
     typer.echo("VM started.")
 
 
 @vm.command("stop")
 def vm_stop():
-    _provider().stop()
+    with _vm_errors():
+        _provider().stop()
     typer.echo("VM stopped.")
 
 
 @vm.command("destroy")
 def vm_destroy():
-    _provider().destroy()
+    with _vm_errors():
+        _provider().destroy()
     typer.echo("VM destroyed.")
 
 

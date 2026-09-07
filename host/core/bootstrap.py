@@ -67,6 +67,24 @@ def _push_file(provider, local: Path, remote: str) -> None:
          step=f"copying {local.name} to the VM")
 
 
+# Absolute path for the same reason bootstrap.sh uses one: Docker Desktop's
+# WSL integration puts its own docker CLI on PATH.
+_DOCKER = "/usr/bin/docker"
+
+
+def restart_agent(provider) -> None:
+    """Recreate the agent container so it re-reads /opt/omelet/agent.token.
+
+    The agent reads the token once, at startup, and `compose up -d` leaves an
+    unchanged service running -- so re-provisioning alone cannot fix an agent
+    that came up without a readable token and refuses every call since.
+    """
+    _run(provider, ["bash", "-lc",
+                    f"{_DOCKER} compose -f {constants.GUEST_STACK} "
+                    "up -d --force-recreate agent"],
+         step="restarting the Omelet service in the VM")
+
+
 def bootstrap(provider, *, force: bool = False) -> None:
     if not force and read_marker(provider) == constants.BOOTSTRAP_VERSION:
         return

@@ -100,3 +100,62 @@ def test_the_agent_restarting_after_the_update_is_waited_out():
                                  repair=lambda: None, sleep=slept.append)
     assert slept, "the agent's restart must be waited out, not spun on"
     assert "0.1.0" in message
+
+
+def _refused(code: str):
+    from host.client import AgentError
+    return AgentError(code, "missing or invalid bearer token", 401)
+
+
+def test_an_agent_that_refuses_this_host_is_reconnected_rather_than_stranded():
+    # /health is exempt from the token check, so `restart: always` never
+    # restarts a container that answers every other route with 503/401. Setup
+    # is the only thing that can fix it, and it used to propagate the refusal
+    # before the repair ever ran -- telling the user to run the very command
+    # that was already running.
+    reconnects = []
+
+    def reconnect():
+        reconnects.append("reconnect")
+        return FakeClient("0.1.0")
+
+    message = agent_version_step(
+        None, client=FakeClient(_refused("agent_unconfigured")),
+        expected="0.1.0", repair=lambda: None, reconnect=reconnect)
+
+    assert reconnects == ["reconnect"]
+    assert "reconnect" in message.lower()
+
+
+def test_an_agent_still_refusing_after_the_reconnect_says_what_was_wrong():
+    from host.core.install import AgentNotAccepted
+
+    with pytest.raises(AgentNotAccepted) as excinfo:
+        agent_version_step(
+            None, client=FakeClient(_refused("unauthorized")), expected="0.1.0",
+            repair=lambda: None,
+            reconnect=lambda: FakeClient(_refused("unauthorized")))
+
+    message = str(excinfo.value)
+    assert "did not accept this computer" in message
+    assert "out of date" not in message, \
+        "the version story is not what happened here"
+
+
+def test_a_refused_agent_is_never_re_provisioned_twice():
+    # The reconnect already ran `compose pull && up -d`; repeating it as a
+    # version repair is minutes of pulling that cannot change the answer.
+    repairs = []
+    agent_version_step(
+        None, client=FakeClient(_refused("agent_unconfigured")),
+        expected="0.1.0", repair=lambda: repairs.append("bootstrap"),
+        reconnect=lambda: FakeClient("0.1.0"))
+    assert repairs == []
+
+
+def test_a_refusal_with_no_reconnect_wired_still_propagates():
+    from host.client import AgentError
+
+    with pytest.raises(AgentError):
+        agent_version_step(None, client=FakeClient(_refused("unauthorized")),
+                           expected="0.1.0", repair=lambda: None)

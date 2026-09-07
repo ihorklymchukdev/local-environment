@@ -57,3 +57,19 @@ def test_vm_create_skips_create_when_present(monkeypatch):
     result = runner.invoke(cli.app, ["vm", "create"])
     assert result.exit_code == 0
     assert fake.created is False
+
+
+def test_vm_start_reports_the_providers_own_failure_instead_of_saying_started(monkeypatch):
+    # `wsl.exe` failing is a Completed with a non-zero code, not an exception:
+    # dropping it printed "VM started." for a VM that does not exist.
+    class BrokenProvider(FakeProvider):
+        def start(self):
+            raise RuntimeError("the virtual machine 'omelet-vm' could not be "
+                               "started (exit 1): no such distribution")
+
+    monkeypatch.setattr(cli, "_provider_factory", lambda: BrokenProvider())
+    result = runner.invoke(cli.app, ["vm", "start"])
+    assert result.exit_code == 1
+    assert "VM started." not in result.stdout
+    assert "no such distribution" in result.output
+    assert "Traceback" not in result.output

@@ -135,3 +135,26 @@ def test_push_file_strips_crlf_so_bash_can_read_the_script(tmp_path, monkeypatch
     assert b"\r" not in script, "CRLF reached the Linux guest"
     assert script.splitlines()[1] == b"set -euo pipefail"
     assert b"\r" not in _pushed_payload(p, constants.GUEST_STACK)
+
+
+def test_restarting_the_agent_forces_a_recreate_rather_than_a_no_op_up():
+    # The agent reads its token once at startup and `up -d` leaves an unchanged
+    # service alone, so without --force-recreate the "reconnect" repair cannot
+    # fix the agent that is refusing every call.
+    from host.core.bootstrap import restart_agent
+
+    p = FakeProvider(marker_value=str(constants.BOOTSTRAP_VERSION))
+    restart_agent(p)
+    joined = [" ".join(a) for a, root in p.execs if root]
+    assert any("--force-recreate" in c and c.rstrip().endswith("agent")
+               and constants.GUEST_STACK in c for c in joined), joined
+
+
+def test_a_failed_agent_restart_is_reported_with_the_guests_own_error():
+    from host.core.bootstrap import restart_agent
+
+    p = FakeProvider(marker_value=str(constants.BOOTSTRAP_VERSION),
+                     fail_on="force-recreate", stderr="no such service: agent")
+    with pytest.raises(BootstrapError) as excinfo:
+        restart_agent(p)
+    assert "no such service: agent" in str(excinfo.value)

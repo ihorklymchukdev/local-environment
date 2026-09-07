@@ -162,6 +162,19 @@ class Wsl2Provider:
         p = self._run([self.wsl, *args])
         return Completed(p.returncode, decode_wsl(p.stdout), decode_wsl(p.stderr))
 
+    @staticmethod
+    def _require(result: Completed, what: str) -> Completed:
+        """`exec()` and `_meta()` return a `Completed` and never raise, so a
+        dropped result is a silent success: `omelet vm start` printed "VM
+        started." for a distro that does not exist, and an unchecked wsl.conf
+        write surfaced minutes later as `systemctl enable --now docker`
+        failing for no visible reason."""
+        if result.ok:
+            return result
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(f"{what} (exit {result.returncode})"
+                           + (f": {detail}" if detail else "."))
+
     def is_supported(self) -> Diagnosis:
         return diagnose_wsl2(self._run, self.wsl)
 
@@ -175,26 +188,32 @@ class Wsl2Provider:
         if not self.rootfs.exists():
             raise FileNotFoundError(f"rootfs not found: {self.rootfs}")
         self.install_dir.mkdir(parents=True, exist_ok=True)
-        imported = self._meta(["--import", self.distro, str(self.install_dir),
-                               str(self.rootfs), "--version", "2"])
-        if not imported.ok:
-            raise RuntimeError(
-                f"wsl --import failed (exit {imported.returncode}): "
-                f"{(imported.stderr or imported.stdout).strip()}")
-        # systemd is off by default in WSL; docker.service needs it.
-        self.exec(["bash", "-lc", "printf '[boot]\\nsystemd=true\\n' > /etc/wsl.conf"],
-                  root=True)
+        self._require(
+            self._meta(["--import", self.distro, str(self.install_dir),
+                        str(self.rootfs), "--version", "2"]),
+            f"the virtual machine '{self.distro}' could not be created")
+        # systemd is off by default in WSL; docker.service needs it. Checked:
+        # a failed write here means systemd stays off, and the only symptom is
+        # bootstrap dying minutes later at `systemctl enable --now docker`.
+        self._require(
+            self.exec(["bash", "-lc",
+                       "printf '[boot]\\nsystemd=true\\n' > /etc/wsl.conf"],
+                      root=True),
+            f"systemd could not be turned on inside '{self.distro}'")
         self.stop()  # --terminate so the wsl.conf change takes effect on next boot
 
     def start(self) -> None:
         # Running any command boots the distro.
-        self.exec(["true"])
+        self._require(self.exec(["true"]),
+                      f"the virtual machine '{self.distro}' could not be started")
 
     def stop(self) -> None:
-        self._meta(["--terminate", self.distro])
+        self._require(self._meta(["--terminate", self.distro]),
+                      f"the virtual machine '{self.distro}' could not be stopped")
 
     def destroy(self) -> None:
-        self._meta(["--unregister", self.distro])
+        self._require(self._meta(["--unregister", self.distro]),
+                      f"the virtual machine '{self.distro}' could not be removed")
 
     def exec(self, argv: list[str], *, root: bool = False) -> Completed:
         base = [self.wsl, "-d", self.distro]
