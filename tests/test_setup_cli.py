@@ -153,10 +153,13 @@ def test_uninstall_purge_succeeds_and_clears_state(monkeypatch):
     assert state.completed() == set()
 
 
-def test_selfcheck_reports_ok_for_all_four_bundled_assets():
+def test_selfcheck_reports_ok_for_all_three_bundled_assets():
+    # traefik.yml dropped out of the bundle in Task 6: Traefik's config moved
+    # onto agent/deploy/stack.yml's `command:` list, and nothing pushes that
+    # file to the VM yet (Task 7).
     result = runner.invoke(cli.app, ["selfcheck"])
     assert result.exit_code == 0
-    for name in ("bootstrap.sh", "traefik.yml", "docker-compose.yml", "omelet.yaml"):
+    for name in ("bootstrap.sh", "docker-compose.yml", "omelet.yaml"):
         assert name in result.stdout
     assert "MISSING" not in result.stdout
 

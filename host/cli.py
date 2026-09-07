@@ -262,7 +262,9 @@ def selfcheck():
 
     checks = [
         ("host/provision/bootstrap.sh", _ASSETS / "bootstrap.sh"),
-        ("host/provision/traefik.yml", _ASSETS / "traefik.yml"),
+        # traefik.yml is gone (Task 6): Traefik's config moved onto
+        # agent/deploy/stack.yml's `command:` list. Task 7 adds a check here
+        # for however stack.yml itself reaches the VM.
         ("agent/templates/nginx-hello/docker-compose.yml",
          VERIFY_TEMPLATE / "docker-compose.yml"),
         ("host/providers/omelet.yaml", Path(_providers.__file__).parent / "omelet.yaml"),

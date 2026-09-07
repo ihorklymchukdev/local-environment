@@ -1,8 +1,23 @@
 import pytest
 
+import host.core.bootstrap as bs
 from host.core.bootstrap import bootstrap, read_marker, BootstrapError
 from host.core.provider import Completed
 from agent.core import constants
+
+
+@pytest.fixture(autouse=True)
+def _stub_assets(tmp_path, monkeypatch):
+    # host/provision/traefik.yml was deleted in Task 6 (Traefik's config
+    # moved onto agent/deploy/stack.yml's `command:` list); host/core/bootstrap.py
+    # still pushes it until Task 7 rewires the bootstrap around stack.yml.
+    # Point _ASSETS at a stand-in so these tests exercise the push logic
+    # without depending on that now-absent file.
+    assets = tmp_path / "provision"
+    assets.mkdir()
+    (assets / "bootstrap.sh").write_text("#!/usr/bin/env bash\nset -euo pipefail\n")
+    (assets / "traefik.yml").write_text("entryPoints:\n  web:\n")
+    monkeypatch.setattr(bs, "_ASSETS", assets)
 
 
 class FakeProvider:
