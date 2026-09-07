@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 import threading
 from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
+                               StreamingResponse)
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from ..core import lifecycle
+from ..core import files, lifecycle
 from ..core.config import AgentConfig
 from ..core.detect import AmbiguousError
 from ..core.exec import LocalRunner
@@ -272,6 +275,79 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
     @app.get("/projects/{project_id}")
     def get_project(project_id: str) -> dict:
         return payload(require_row(project_id))
+
+    def resolve_path(project_id: str, rel_path: str) -> Path:
+        try:
+            return files.resolve_within(project_dir(project_id), rel_path)
+        except files.PathTraversalError as e:
+            raise ApiError("path_traversal", str(e), 400) from e
+
+    async def _stream_to_tempfile(request: Request, dir_: Path) -> Path:
+        # Written next to its destination, never buffered whole in memory -
+        # this route body is what removes the old ~24 KB command-line ceiling.
+        dir_.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(dir=dir_, suffix=".upload")
+        path = Path(name)
+        with os.fdopen(fd, "wb") as f:
+            async for chunk in request.stream():
+                f.write(chunk)
+        return path
+
+    @app.post("/projects/{project_id}/files")
+    async def upload_files(project_id: str, request: Request) -> dict:
+        require_row(project_id)
+        d = project_dir(project_id)
+        tmp = await _stream_to_tempfile(request, d.parent)
+        try:
+            try:
+                files.extract_archive(tmp, d)
+            except files.PathTraversalError as e:
+                raise ApiError("path_traversal", str(e), 400) from e
+            except files.BadArchiveError as e:
+                raise ApiError("bad_archive", str(e), 400) from e
+        finally:
+            tmp.unlink(missing_ok=True)
+        return {"id": project_id, "files": files.list_tree(d)}
+
+    @app.get("/projects/{project_id}/files")
+    def list_files(project_id: str) -> dict:
+        require_row(project_id)
+        return {"files": files.list_tree(project_dir(project_id))}
+
+    @app.put("/projects/{project_id}/files/{file_path:path}")
+    async def write_file(project_id: str, file_path: str, request: Request) -> dict:
+        require_row(project_id)
+        target = resolve_path(project_id, file_path)
+        d = project_dir(project_id)
+        # Staged next to the project directory, not inside it, so a listing
+        # never catches the upload half-written.
+        tmp = await _stream_to_tempfile(request, d.parent)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(tmp, target)
+        finally:
+            tmp.unlink(missing_ok=True)
+        return {"path": file_path, "size": target.stat().st_size}
+
+    @app.get("/projects/{project_id}/files/{file_path:path}")
+    def read_file(project_id: str, file_path: str):
+        require_row(project_id)
+        target = resolve_path(project_id, file_path)
+        if not target.is_file():
+            raise ApiError("file_not_found",
+                           f"no file '{file_path}' in project '{project_id}'", 404)
+        # Starlette streams this from disk; the file is never read whole.
+        return FileResponse(target)
+
+    @app.delete("/projects/{project_id}/files/{file_path:path}")
+    def delete_file(project_id: str, file_path: str) -> dict:
+        require_row(project_id)
+        target = resolve_path(project_id, file_path)
+        if not target.is_file():
+            raise ApiError("file_not_found",
+                           f"no file '{file_path}' in project '{project_id}'", 404)
+        target.unlink()
+        return {"path": file_path, "deleted": True}
 
     @app.delete("/projects/{project_id}")
     def delete_project(project_id: str) -> dict:

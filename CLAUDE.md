@@ -66,6 +66,13 @@ Do not add an `if windows` anywhere else — push the difference into a provider
 - `agent/core/exec.py` — `LocalRunner`, the in-VM twin of `VmProvider.exec`: same `Completed`
   contract, never raises. `agent/core/config.py` — `AgentConfig`, the only place the domain and
   edge port may come from.
+- `agent/core/files.py` — project file transfer over HTTP (`POST/GET /projects/{id}/files`,
+  `PUT/GET/DELETE /projects/{id}/files/{path}`), replacing the 32,767-character `wsl.exe`
+  command-line ceiling with a streamed request body. `extract_archive` merges an uploaded
+  tar.gz into the project directory rather than replacing it, and rejects any entry (absolute
+  path, `..` escape, symlink/hardlink escaping the tree) via `tarfile`'s `filter="data"` plus an
+  explicit absolute-path check, since that filter silently normalizes an absolute name instead
+  of refusing it.
 
 ### Things that will bite you
 
