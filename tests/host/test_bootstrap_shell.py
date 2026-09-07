@@ -4,7 +4,12 @@ from pathlib import Path
 
 from host.core import constants
 
-BOOTSTRAP = Path("host/provision/bootstrap.sh")
+# Anchored to this file, never to the working directory: a cwd-relative path
+# scans nothing and fails (or passes) for the wrong reason when pytest runs
+# elsewhere. Same rule as tests/test_no_platform_leak.py and the two
+# import-boundary tests.
+ROOT = Path(__file__).resolve().parents[2]
+BOOTSTRAP = ROOT / "host" / "provision" / "bootstrap.sh"
 
 
 def test_bootstrap_is_valid_bash():
@@ -55,7 +60,8 @@ def test_smoke_test_template_publishes_no_host_port():
     # with "failed to bind host port 0.0.0.0:8080/tcp: address already in use".
     import yaml
     compose = yaml.safe_load(
-        (Path("agent/templates/nginx-hello/docker-compose.yml")).read_text())
+        (ROOT / "agent" / "templates" / "nginx-hello"
+         / "docker-compose.yml").read_text())
     for name, svc in compose["services"].items():
         assert not svc.get("ports"), f"{name} publishes a host port"
 
