@@ -8,16 +8,23 @@ from __future__ import annotations
 
 import pytest
 
-from host.core.constants import AGENT_IMAGE, EXPECTED_AGENT_VERSION
 from host.core.install import AgentTooOld, agent_version_step
 
 
 class FakeClient:
-    def __init__(self, version: str):
-        self._version = version
+    """Answers /version. `versions` is consumed one call at a time, so a test
+    can say what the agent reports before and after a repair; an entry that is
+    an exception is raised instead."""
+
+    def __init__(self, *versions):
+        self._versions = list(versions)
 
     def version(self) -> str:
-        return self._version
+        answer = (self._versions.pop(0) if len(self._versions) > 1
+                  else self._versions[0])
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
 
 
 def test_an_older_agent_is_reported_in_words_a_user_can_act_on():
@@ -48,7 +55,48 @@ def test_a_version_that_cannot_be_ordered_does_not_block_setup():
     agent_version_step(None, client=FakeClient(""), expected="0.1.0")
 
 
-def test_the_expected_version_is_the_tag_the_host_pulls():
-    # Derived, not restated: a bumped image tag must not leave the check
-    # behind, comparing against a version nothing deploys any more.
-    assert AGENT_IMAGE.endswith(f":{EXPECTED_AGENT_VERSION}")
+def test_an_older_agent_is_updated_in_place_rather_than_left_stuck():
+    # The scenario this check exists for is an upgraded host against a VM
+    # provisioned by the previous one. Reporting it and stopping leaves a
+    # non-technical user with no move but destroying the VM and every project
+    # in it -- bootstrap.sh's `compose pull && up -d` is the update mechanism,
+    # and the marker that normally skips it is what left this VM behind.
+    repairs = []
+    message = agent_version_step(
+        None, client=FakeClient("0.0.9", "0.1.0"), expected="0.1.0",
+        repair=lambda: repairs.append("bootstrap"))
+
+    assert repairs == ["bootstrap"]
+    assert "0.1.0" in message
+
+
+def test_an_agent_still_too_old_after_the_update_is_reported_once():
+    repairs = []
+    with pytest.raises(AgentTooOld):
+        agent_version_step(None, client=FakeClient("0.0.9"), expected="0.1.0",
+                           repair=lambda: repairs.append("bootstrap"))
+    assert repairs == ["bootstrap"], "a failing update must not be retried"
+
+
+def test_a_current_agent_is_never_re_provisioned():
+    # The repair is minutes of pulling; an up-to-date VM must not pay it.
+    repairs = []
+    agent_version_step(None, client=FakeClient("0.1.0"), expected="0.1.0",
+                       repair=lambda: repairs.append("bootstrap"))
+    assert repairs == []
+
+
+def test_the_agent_restarting_after_the_update_is_waited_out():
+    # `compose up -d` returns before the new container is serving, so the
+    # first version read after a repair legitimately answers "connection
+    # refused". Failing there would report an unreachable VM seconds after
+    # updating it.
+    from host.client import AgentUnavailableError
+
+    slept = []
+    client = FakeClient("0.0.9", AgentUnavailableError("connection refused"),
+                        "0.1.0")
+    message = agent_version_step(None, client=client, expected="0.1.0",
+                                 repair=lambda: None, sleep=slept.append)
+    assert slept, "the agent's restart must be waited out, not spun on"
+    assert "0.1.0" in message

@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from agent.api.app import create_app
 from agent.core.config import AgentConfig
 from agent.core.exec import Completed
-from host.client import AgentClient
+from host.client import AgentClient, AgentError
 from host.core.constants import DEFAULT_DOMAIN, EDGE_PORT
 from host.core.install import VerificationFailed, verify_step
 
@@ -124,6 +124,58 @@ def test_verify_waits_out_the_404_before_traefik_publishes_the_router(agent,
     verify_step(None, template, DEFAULT_DOMAIN, client=client,
                 http_get=http_get, sleep=slept.append)
     assert slept, "the smoke test must retry rather than fail on the first 404"
+
+
+class RefusesTeardown:
+    """The client, with `delete_project` broken."""
+
+    def __init__(self, client):
+        self._client = client
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+
+    def delete_project(self, project_id):
+        raise AgentError("http_error", "the agent answered HTTP 500", 500)
+
+
+def test_a_teardown_failure_on_the_success_path_is_reported_not_swallowed(
+        agent, template):
+    # Otherwise setup says "finished successfully" while the smoke-test
+    # containers keep running and omelet-selftest sits in `omelet status`
+    # with nothing to explain it.
+    client, _runner, _probe = agent
+    with pytest.raises(VerificationFailed, match="could not be removed"):
+        verify_step(None, template, DEFAULT_DOMAIN, client=RefusesTeardown(client),
+                    http_get=lambda url: 200)
+
+
+def test_a_teardown_failure_never_replaces_the_reason_verification_failed(
+        agent, template):
+    client, _runner, _probe = agent
+    with pytest.raises(VerificationFailed, match="502"):
+        verify_step(None, template, DEFAULT_DOMAIN, client=RefusesTeardown(client),
+                    http_get=lambda url: 502, ready_timeout=0)
+
+
+def test_a_failure_leads_with_a_sentence_and_keeps_the_detail_below(agent,
+                                                                   template):
+    # These are the words someone reads at the moment their install failed.
+    # The status enum and the HTTP code are for whoever they send it to.
+    client, runner, _probe = agent
+
+    with pytest.raises(VerificationFailed) as excinfo:
+        verify_step(None, template, DEFAULT_DOMAIN, client=client,
+                    http_get=lambda url: 502, ready_timeout=0)
+    first, rest = str(excinfo.value).split("\n", 1)
+    assert "502" not in first and "502" in rest
+
+    runner.ps = Completed(0, PS_RESTARTING, "")
+    with pytest.raises(VerificationFailed) as excinfo:
+        verify_step(None, template, DEFAULT_DOMAIN, client=client,
+                    http_get=lambda url: 200)
+    first, rest = str(excinfo.value).split("\n", 1)
+    assert "crash_looping" not in first and "crash_looping" in rest
 
 
 def test_verify_reports_the_agents_diagnosis_instead_of_polling_a_dead_url(

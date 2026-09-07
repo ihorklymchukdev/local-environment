@@ -16,7 +16,9 @@ _LABELS = {
     "fetch_image": "Downloading Linux image",
     "create_vm": "Creating the virtual machine",
     "bootstrap": "Installing Docker",
-    "agent": "Checking the Omelet service",
+    # Named for what it may do, not only for what it usually does: the check
+    # re-provisions the guest stack when the VM is behind, which takes a minute.
+    "agent": "Checking and updating the Omelet service",
     "verify": "Testing the setup",
     "finish": "Finishing up",
 }

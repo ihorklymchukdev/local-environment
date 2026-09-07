@@ -139,24 +139,58 @@ def _version_tuple(version: str) -> tuple[int, ...] | None:
     return tuple(parts) or None
 
 
-def agent_version_step(provider, *, client=None, expected: str | None = None):
-    """Fail early when the VM's agent is older than this host expects.
+# `docker compose up -d` returns before the new agent container is serving, so
+# the first version read after an update legitimately answers "connection
+# refused".
+AGENT_RESTART_TIMEOUT = 30.0
 
-    A newer agent is deliberately not an error: routes are added rather than
-    removed, so an agent ahead of the host still answers everything it asks
-    for, and refusing one would break a host downgrade or a pre-release image
-    for no gain. A version that cannot be ordered is not an error either --
-    refusing to set up over a string we cannot read is worse than continuing.
+
+def _is_current(found: str, want: tuple[int, ...] | None) -> bool:
+    """A newer agent is deliberately not an error: routes are added rather
+    than removed, so an agent ahead of the host still answers everything it
+    asks for, and refusing one would break a host downgrade or a pre-release
+    image for no gain. A version that cannot be ordered is not an error either
+    -- refusing to set up over a string we cannot read is worse than
+    continuing."""
+    have = _version_tuple(found)
+    return want is None or have is None or have >= want
+
+
+def _version_once_serving(client, sleep, timeout: float) -> str:
+    from host.client import AgentUnavailableError
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            return client.version()
+        except AgentUnavailableError:
+            if time.monotonic() >= deadline:
+                raise
+        sleep(1.0)
+
+
+def agent_version_step(provider, *, client=None, expected: str | None = None,
+                       repair=None, sleep=time.sleep):
+    """Bring the VM's agent up to the version this host expects, or say why not.
+
+    `repair` re-provisions the guest stack (`compose pull && up -d`) and is
+    tried once: without it the only exit from an older agent is destroying the
+    VM, which discards every project in it.
     """
     from host.client import AgentClient
     from host.core import constants
 
     expected = expected or constants.EXPECTED_AGENT_VERSION
     client = client or AgentClient.for_provider(provider)
+    want = _version_tuple(expected)
     found = client.version()
-    want, have = _version_tuple(expected), _version_tuple(found)
-    if want is None or have is None or have >= want:
+    if _is_current(found, want):
         return None
+    if repair is not None:
+        repair()
+        found = _version_once_serving(client, sleep, AGENT_RESTART_TIMEOUT)
+        if _is_current(found, want):
+            return ("The Omelet service in the virtual machine was out of "
+                    f"date and has been updated to {found}.")
     raise AgentTooOld(
         f"The virtual machine is running an older version of the Omelet "
         f"service ({found}) than this app expects ({expected}).")
@@ -189,11 +223,14 @@ def _await_http_ok(url: str, http_get, timeout: float, sleep) -> None:
         if code == 200:
             return
         if time.monotonic() >= deadline:
+            # First line for the user, second for whoever they send it to.
             if error is not None:
                 raise VerificationFailed(
-                    f"{url} did not respond: {error}") from error
+                    f"The test project did not answer at {url}.\n"
+                    f"{type(error).__name__}: {error}") from error
             raise VerificationFailed(
-                f"{url} returned HTTP {code}, expected 200")
+                f"The test project answered with an error at {url}.\n"
+                f"The address returned HTTP {code} instead of 200.")
         sleep(0.5)
 
 
@@ -218,8 +255,8 @@ def verify_step(provider, template_dir: Path, domain: str, *, client=None,
         except JobFailedError as e:
             status = e.result.get("status", "failed")
             raise VerificationFailed(
-                f"smoke-test project status: {status}"
-                + (f"\n{e}" if str(e) else "")) from e
+                "The test project's containers did not stay running.\n"
+                f"status: {status}" + (f"\n{e}" if str(e) else "")) from e
         problem = result.get("problem")
         if problem:
             # The containers started, but the agent already probed the URL
@@ -238,15 +275,24 @@ def verify_step(provider, template_dir: Path, domain: str, *, client=None,
 
 def _teardown(client) -> None:
     """Remove the smoke-test project, containers and state row alike, so a
-    failed verify leaves nothing running and `omelet status` stays clean.
+    failed verify leaves nothing running and `omelet status` stays clean."""
+    import sys
 
-    Swallows its own failure on purpose: this runs in a `finally`, and a
-    teardown error must never replace the reason verification failed."""
     from host.core.constants import VERIFY_PROJECT_ID
+    # Read before the call: inside the `except` below, the exception being
+    # handled is this one, not the one that is propagating.
+    already_failing = sys.exc_info()[0] is not None
     try:
         client.delete_project(VERIFY_PROJECT_ID)
-    except Exception:
-        pass
+    except Exception as e:
+        # Swallowed only while a failure is already on its way out -- masking
+        # the reason verification failed is worse than a leaked container. On
+        # the success path the leak is the only thing left to report.
+        if not already_failing:
+            raise VerificationFailed(
+                "The test project worked, but it could not be removed from "
+                "the virtual machine afterwards. Its containers may still be "
+                f"running.\n{e}") from e
 
 
 def finish_step(install_dir) -> str:
@@ -311,13 +357,15 @@ def default_steps(provider, *, cache_dir, template_dir: Path, domain,
         # Before verify, not after: a host talking to an agent that predates
         # the routes it uses should say so in one sentence, not fail several
         # minutes into a compose run with a 404 on a route name.
-        step("agent", lambda: agent_version_step(provider), always_run=True),
+        step("agent", lambda: agent_version_step(
+            provider, repair=lambda: _bootstrap(provider, force=True)),
+            always_run=True),
         step("verify", lambda: verify_step(provider, template_dir, domain),
              always_run=True),
         step("finish", lambda: finish_step(install_dir), always_run=True),
     ]
 
 
-def _bootstrap(provider) -> None:
+def _bootstrap(provider, *, force: bool = False) -> None:
     from .bootstrap import bootstrap
-    bootstrap(provider)
+    bootstrap(provider, force=force)

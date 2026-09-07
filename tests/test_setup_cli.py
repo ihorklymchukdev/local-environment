@@ -60,7 +60,8 @@ def provisionable(monkeypatch):
 
     monkeypatch.setattr(cli, "_provider_factory", lambda: StubProvider())
     monkeypatch.setattr(download_mod, "fetch", lambda image, dest: dest)
-    monkeypatch.setattr(bootstrap_mod, "bootstrap", lambda provider: None)
+    monkeypatch.setattr(bootstrap_mod, "bootstrap",
+                        lambda provider, **kwargs: None)
     monkeypatch.setattr(install_mod, "agent_version_step", lambda *a, **k: None)
     monkeypatch.setattr(install_mod, "verify_step", lambda *a, **k: None)
     return monkeypatch
@@ -81,7 +82,7 @@ def test_resume_explains_why_setup_started_by_itself(provisionable):
 def test_a_failure_offers_a_suggested_action(provisionable):
     import host.core.bootstrap as bootstrap_mod
 
-    def explode(provider):
+    def explode(provider, **kwargs):
         raise RuntimeError("apt-get: Temporary failure resolving 'archive.ubuntu.com'")
 
     provisionable.setattr(bootstrap_mod, "bootstrap", explode)
