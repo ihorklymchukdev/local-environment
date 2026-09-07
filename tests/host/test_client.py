@@ -254,6 +254,55 @@ def test_upload_directory_sends_a_tar_gz_of_the_directory_contents(tmp_path):
     assert "docker-compose.yml" in names and "app/index.html" in names
 
 
+def test_the_upload_leaves_out_repositories_caches_and_the_generated_overlay(
+        tmp_path):
+    # A repository's object store re-sent on every `up` is silently slow, can
+    # trip the agent's upload cap on a project that is trivial to run, and
+    # carries .git/config credentials into the VM.
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n")
+    for rel in (".git/objects/blob", "node_modules/pkg/index.js",
+                "app/node_modules/nested/index.js", ".venv/bin/python",
+                "app/__pycache__/x.pyc", ".omelet/overlay.yml",
+                ".omelet/project.yml", "app/index.html"):
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x")
+
+    c, opener = client(lambda call: {"id": "blog", "files": []})
+    c.upload_directory("blog", tmp_path)
+    with tarfile.open(fileobj=io.BytesIO(opener.calls[0].body), mode="r:gz") as tar:
+        names = {n for n in tar.getnames()}
+
+    assert names == {"docker-compose.yml", "app", "app/index.html",
+                     ".omelet", ".omelet/project.yml"}, names
+    # project.yml is the user's own configuration and the agent resolves web
+    # services from it; only the generated overlay is dropped.
+    assert ".omelet/project.yml" in names
+
+
+def test_a_stale_token_is_reported_with_the_command_that_fixes_it():
+    c, _ = client(lambda call: http_error(401, "unauthorized",
+                                          "missing or invalid bearer token"))
+    try:
+        c.list_projects()
+        raise AssertionError("expected AgentError")
+    except AgentError as e:
+        assert e.code == "unauthorized"
+        assert "omelet setup" in str(e)
+        # The agent's own wording is kept, not replaced.
+        assert "bearer token" in str(e)
+
+
+def test_an_unconfigured_agent_says_setup_has_not_finished():
+    c, _ = client(lambda call: http_error(
+        503, "agent_unconfigured", "the agent has no token configured"))
+    try:
+        c.list_projects()
+        raise AssertionError("expected AgentError")
+    except AgentError as e:
+        assert "omelet setup" in str(e)
+
+
 def test_ensure_project_tolerates_one_that_already_exists():
     seen = []
 

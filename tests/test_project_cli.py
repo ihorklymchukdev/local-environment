@@ -85,6 +85,16 @@ def test_up_creates_uploads_starts_and_prints_the_url(monkeypatch, tmp_path):
     assert "http://blog.127-0-0-1.sslip.io:39080" in result.output
 
 
+def test_up_says_so_when_a_project_exposes_nothing_over_http(monkeypatch, tmp_path):
+    # A worker-only project starts fine and has no URL; printing nothing at
+    # all leaves the user unable to tell success from a no-op.
+    use(monkeypatch, FakeClient(job={"state": "done",
+                                     "result": {"status": "started_ok", "urls": []}}))
+    result = runner.invoke(cli.app, ["up", str(project_dir(tmp_path))])
+    assert result.exit_code == 0
+    assert "started" in result.output and "no service is exposed" in result.output.lower()
+
+
 def test_up_reports_the_guests_own_output_when_the_stack_does_not_stay_up(
         monkeypatch, tmp_path):
     failure = JobFailedError("web exited with code 1: bind: address in use",

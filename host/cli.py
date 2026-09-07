@@ -132,7 +132,12 @@ def up(directory: str = typer.Argument(".", help="Project directory with a docke
             if str(e):
                 typer.echo(str(e), err=True)
             raise typer.Exit(code=1)
-        for url in job.get("result", {}).get("urls", []):
+        urls = job.get("result", {}).get("urls") or []
+        if not urls:
+            # A successful run that printed nothing at all leaves the user
+            # unsure whether anything happened.
+            typer.echo(f"{project_id} started. No service is exposed over HTTP.")
+        for url in urls:
             typer.echo(f"  {url}")
 
 

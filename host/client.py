@@ -104,17 +104,52 @@ def project_id_for(name: str) -> str:
     return re.sub(r"[^a-z0-9-]+", "-", name.strip().lower()).strip("-")
 
 
+# Two agent codes have a known real-world cause the agent cannot know about,
+# and their own wording ("missing or invalid bearer token") tells a
+# non-technical user nothing they can act on.
+_GUIDANCE = {
+    "unauthorized": "The VM no longer accepts this token, which usually means "
+                    "the VM was rebuilt. Run `omelet setup` to reconnect.",
+    "agent_unconfigured": "The VM has not finished setting itself up. "
+                          "Run `omelet setup`.",
+}
+
+
 def _agent_error(exc: urllib.error.HTTPError) -> AgentError:
     """Every non-2xx body from the agent is `{"error": {"code", "message"}}`.
     Anything else answering on this port (a proxy, a crashed server) must
     still come out as a readable failure rather than a JSONDecodeError."""
     try:
         error = json.loads(exc.read().decode("utf-8", "replace"))["error"]
-        return AgentError(str(error["code"]), str(error["message"]), exc.code)
+        code, message = str(error["code"]), str(error["message"])
+        guidance = _GUIDANCE.get(code)
+        if guidance:
+            message = f"{guidance} (the agent said: {message})"
+        return AgentError(code, message, exc.code)
     except (OSError, ValueError, KeyError, TypeError):
         return AgentError("http_error",
                           f"the agent answered HTTP {exc.code} ({exc.reason})",
                           exc.code)
+
+
+# Never uploaded: a repository's object store, dependency trees and caches are
+# megabytes to gigabytes the VM has no use for, re-sent on every `up`, and
+# `.git/config` would carry credentials into the guest as a side effect.
+# Matched on any path component, so a nested node_modules is excluded too.
+EXCLUDED_DIRS = frozenset({".git", "node_modules", ".venv", "__pycache__"})
+# The overlay is generated inside the VM on every `compose_up`. `.omelet/` as a
+# whole is NOT excluded: `.omelet/project.yml` is the user's own configuration
+# and the agent reads it to resolve web services.
+EXCLUDED_FILES = frozenset({".omelet/overlay.yml"})
+
+
+def _uploadable(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
+    """`tarfile.add`'s filter: dropping a directory here prunes its contents."""
+    if info.name in EXCLUDED_FILES:
+        return None
+    if any(part in EXCLUDED_DIRS for part in info.name.split("/")):
+        return None
+    return info
 
 
 class AgentClient:
@@ -232,7 +267,7 @@ class AgentClient:
         with tempfile.TemporaryFile() as archive:
             with tarfile.open(fileobj=archive, mode="w:gz") as tar:
                 for item in sorted(Path(local_dir).iterdir()):
-                    tar.add(item, arcname=item.name)
+                    tar.add(item, arcname=item.name, filter=_uploadable)
             size = archive.tell()
             archive.seek(0)
             with self._open("POST", f"/projects/{project_id}/files",

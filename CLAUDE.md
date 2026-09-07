@@ -85,7 +85,9 @@ Do not add an `if windows` anywhere else — push the difference into a provider
 ### Things that will bite you
 
 - **Project files travel over HTTP, not the command line.** `AgentClient.upload_directory` tars the
-  local directory into a temp file and POSTs it as a raw `application/gzip` body. The old
+  local directory into a temp file and POSTs it as a raw `application/gzip` body, skipping
+  `EXCLUDED_DIRS` (`.git`, `node_modules`, `.venv`, `__pycache__`, at any depth) and the generated
+  `.omelet/overlay.yml` — but never `.omelet/project.yml`, which is the user's own configuration. The old
   `lifecycle.push_project` (base64 through `bash -lc`, and its ~24 KB ceiling) survives only for
   `host/core/install.py::verify_step` until Task 12 rewrites it. `bootstrap._push_file` still
   base64s its two assets through `bash -lc`: it runs before the agent exists.

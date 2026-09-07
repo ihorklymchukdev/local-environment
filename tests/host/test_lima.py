@@ -47,3 +47,21 @@ def test_stop_and_destroy():
     assert r.calls[-1] == ["limactl", "stop", "omelet-vm"]
     p.destroy()
     assert r.calls[-1] == ["limactl", "delete", "omelet-vm"]
+
+
+def test_the_lima_config_forwards_exactly_the_ports_the_host_dials():
+    # The literals in omelet.yaml are the only thing making the guest sockets
+    # reachable from the host, and equal ports on both sides is a design
+    # invariant (`forward()` refuses anything else). Held against the
+    # constants, not against another copy of the literals.
+    import re
+    from pathlib import Path
+
+    from host.core import constants
+
+    config = (Path(__file__).resolve().parents[2] / "host" / "providers"
+              / "omelet.yaml").read_text()
+    pairs = {(int(g), int(h)) for g, h in re.findall(
+        r"guestPort:\s*(\d+)\s*\n\s*hostPort:\s*(\d+)", config)}
+    assert pairs == {(constants.EDGE_PORT, constants.EDGE_PORT),
+                     (constants.AGENT_PORT, constants.AGENT_PORT)}
