@@ -21,7 +21,7 @@ from agent.core.config import AgentConfig
 from agent.core.exec import Completed
 from host.client import AgentClient, AgentError
 
-from tests.agent.test_api_routes import COMPOSE_ONE_WEB, FakeRunner
+from tests.agent.test_api_routes import COMPOSE_ONE_WEB, FakeProbe, FakeRunner
 
 TOKEN = "test-token"
 
@@ -61,9 +61,12 @@ def seam(tmp_path):
     config = AgentConfig(domain="test.local", edge_port=41080,
                          projects_root=tmp_path / "projects",
                          state_db=tmp_path / "state.db",
-                         token_path=tmp_path / "agent.token")
+                         token_path=tmp_path / "agent.token",
+                         ready_timeout=0.0)
     runner = FakeRunner()
-    app = create_app(config=config, runner=runner)
+    # Injected: the real probe would open a socket to a Traefik that does not
+    # exist here, and then wait out the whole readiness window doing it.
+    app = create_app(config=config, runner=runner, http_probe=FakeProbe())
     with TestClient(app) as test_client:
         # A short real sleep, not the wall-clock poll interval: the job runs on
         # a thread here and finishes in milliseconds.

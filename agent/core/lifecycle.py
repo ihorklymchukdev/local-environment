@@ -79,6 +79,16 @@ def compose_down(provider, project_id: str):
                           "-f", f"{d}/.omelet/overlay.yml", "down"], root=True)
 
 
+def container_id(provider, project_id: str, service: str) -> str:
+    """Empty string when compose cannot resolve one — the project was never
+    started, or the container is already gone. Callers hedge, they don't raise."""
+    result = provider.exec([DOCKER, "compose", "-f",
+                            f"{_guest_dir(project_id)}/docker-compose.yml",
+                            "ps", "-q", service], root=True)
+    lines = result.stdout.split() if result.ok else []
+    return lines[0] if lines else ""
+
+
 def logs_argv(project_id: str, service: str | None = None, *,
               follow: bool = False) -> list[str]:
     d = _guest_dir(project_id)

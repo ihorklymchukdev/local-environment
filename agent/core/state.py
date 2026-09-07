@@ -8,7 +8,9 @@ CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
     guest_path TEXT NOT NULL,
     domain TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'stopped'
+    status TEXT NOT NULL DEFAULT 'stopped',
+    problem_code TEXT,
+    problem_message TEXT
 );
 CREATE TABLE IF NOT EXISTS forwards (
     project_id TEXT NOT NULL,
@@ -44,6 +46,14 @@ class State:
 
     def set_status(self, id, status):
         self._conn.execute("UPDATE projects SET status=? WHERE id=?", (status, id))
+        self._conn.commit()
+
+    def set_problem(self, id, code=None, message=None):
+        """`code=None` clears it: a problem that outlives the fix is worse than
+        none, so every `up` writes this whether or not it found something."""
+        self._conn.execute(
+            "UPDATE projects SET problem_code=?, problem_message=? WHERE id=?",
+            (code, message, id))
         self._conn.commit()
 
     def remove_project(self, id):

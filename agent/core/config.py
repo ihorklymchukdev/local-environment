@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import constants
+from .health import READY_TIMEOUT
 from .. import __version__
 
 
@@ -23,6 +24,12 @@ class AgentConfig:
     port: int = constants.AGENT_PORT
     domain: str = constants.DEFAULT_DOMAIN
     edge_port: int = constants.EDGE_PORT
+    # The name Traefik answers to on the `edge` network. Phase 5 moves the
+    # proxy off this VM, where it stops being a sibling container.
+    traefik_host: str = "traefik"
+    # How long a project may take to answer through Traefik before the agent
+    # goes looking for a reason.
+    ready_timeout: float = READY_TIMEOUT
     projects_root: Path = Path(constants.GUEST_PROJECTS)
     state_db: Path = Path(f"{constants.GUEST_ROOT}/state.db")
     # The shared secret bootstrap.sh generates in the guest. Phase 3 replaces
@@ -41,6 +48,8 @@ class AgentConfig:
             port=int(env.get("OMELET_AGENT_PORT", constants.AGENT_PORT)),
             domain=env.get("OMELET_DOMAIN", constants.DEFAULT_DOMAIN),
             edge_port=int(env.get("OMELET_EDGE_PORT", constants.EDGE_PORT)),
+            traefik_host=env.get("OMELET_TRAEFIK_HOST", "traefik"),
+            ready_timeout=float(env.get("OMELET_READY_TIMEOUT", READY_TIMEOUT)),
             projects_root=Path(env.get("OMELET_PROJECTS_ROOT",
                                        constants.GUEST_PROJECTS)),
             state_db=Path(env.get("OMELET_STATE_DB",

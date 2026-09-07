@@ -11,6 +11,10 @@ from agent.core.exec import Completed
 from agent.core.state import State
 
 PS_RUNNING = '[{"Service":"web","State":"running","ExitCode":0}]'
+# One LISTEN row (st 0A) on 127.0.0.1:80, the shape `cat /proc/net/tcp` prints.
+PROC_NET_LOOPBACK = (
+    "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when\n"
+    "   0: 0100007F:0050 00000000:0000 0A 00000000:00000000 00:00000000\n")
 # NDJSON: docker compose emits one object per line on some versions.
 PS_RESTARTING = ('{"Service":"web","State":"restarting","ExitCode":1}\n'
                  '{"Service":"db","State":"running","ExitCode":0}')
@@ -42,12 +46,18 @@ class FakeRunner:
         self.down = Completed(0, "", "")
         self.logs = Completed(0, "web-1 | listening on 80\n", "")
         self.stream_lines = ["web-1 | one\n", "web-1 | two\n"]
+        self.container_id = Completed(0, "c0ffee1234\n", "")
+        self.proc_net = Completed(0, PROC_NET_LOOPBACK, "")
         self.up_gate = None
 
     def exec(self, argv, *, root=False):
         self.calls.append(argv)
         if argv[1] == "version":
             return self._reply(self.docker_version)
+        if argv[1] == "exec":
+            return self.proc_net
+        if "-q" in argv:
+            return self.container_id
         if argv[-2:] == ["up", "-d"]:
             if self.up_gate is not None:
                 assert self.up_gate.wait(5), "the up job was never released"
@@ -74,6 +84,19 @@ class FakeRunner:
         return [a for a in self.calls if needle in " ".join(a)]
 
 
+class FakeProbe:
+    """Answers the health probe without a socket. 200 by default, so an
+    ordinary `up` in these tests never enters the retry window."""
+
+    def __init__(self):
+        self.status = 200
+        self.calls = []
+
+    def __call__(self, url, host):
+        self.calls.append((url, host))
+        return self.status
+
+
 AUTH = {"Authorization": "Bearer test-token"}
 
 
@@ -88,14 +111,18 @@ def env(tmp_path):
         state_db=tmp_path / "state.db",
         version="9.9.9",
         token_path=token_path,
+        # No retry window: these tests assert on the verdict, and the window
+        # itself is covered against a fake clock in test_health.py.
+        ready_timeout=0.0,
     )
     runner = FakeRunner()
-    app = create_app(config=config, runner=runner)
+    probe = FakeProbe()
+    app = create_app(config=config, runner=runner, http_probe=probe)
     with TestClient(app, headers=AUTH) as client:
         # raw_client returns the 500 a real caller would see instead of
         # re-raising the exception inside the test.
         yield SimpleNamespace(client=client, config=config, runner=runner,
-                              state=app.state.state, jobs=app.state.jobs,
+                              probe=probe, state=app.state.state, jobs=app.state.jobs,
                               raw_client=TestClient(app, raise_server_exceptions=False,
                                                     headers=AUTH))
 
@@ -352,3 +379,45 @@ def test_health_answers_even_when_docker_is_unreachable(env):
 
 def test_version_reports_the_configured_version(env):
     assert env.client.get("/version").json() == {"version": "9.9.9"}
+
+
+def test_a_started_project_traefik_cannot_reach_reports_a_problem(env):
+    # The containers stayed up, so the job succeeds and the URL is printed --
+    # without this the user gets a working-looking URL that answers a proxy
+    # error, and nothing anywhere says why.
+    _create(env)
+    _write_compose(env, "blog")
+    env.probe.status = 502
+
+    job = _run_to_completion(env, env.client.post("/projects/blog/up"))
+    assert job["state"] == "done"
+
+    body = env.client.get("/projects/blog").json()
+    assert body["status"] == "started_ok"
+    assert body["problem"]["code"] == "bound_to_loopback"
+    assert "0.0.0.0" in body["problem"]["message"]
+    assert env.probe.calls[0] == ("http://traefik:41080/", "blog.test.local")
+
+
+def test_a_fixed_project_clears_its_problem_on_the_next_up(env):
+    _create(env)
+    _write_compose(env, "blog")
+    env.probe.status = 502
+    _run_to_completion(env, env.client.post("/projects/blog/up"))
+    assert env.client.get("/projects/blog").json()["problem"] is not None
+
+    env.probe.status = 200
+    _run_to_completion(env, env.client.post("/projects/blog/up"))
+    assert env.client.get("/projects/blog").json()["problem"] is None
+
+
+def test_a_broken_compose_file_outranks_a_routing_problem(env):
+    # Both can be true at once; the one the user has to fix first wins.
+    _create(env)
+    _write_compose(env, "blog")
+    env.probe.status = 502
+    _run_to_completion(env, env.client.post("/projects/blog/up"))
+    _write_compose(env, "blog", COMPOSE_MALFORMED)
+
+    assert env.raw_client.get("/projects/blog").json()["problem"]["code"] == \
+        "invalid_compose"

@@ -20,6 +20,8 @@ from ..core import files, lifecycle
 from ..core.config import AgentConfig
 from ..core.detect import AmbiguousError
 from ..core.exec import LocalRunner
+# Imported by name: the /health route below shadows a module named `health`.
+from ..core.health import default_probe, diagnose
 from ..core.overlay import host_for
 from ..core.project import STARTED_OK, Project, _slug, load_project
 from ..core.state import State
@@ -132,9 +134,10 @@ def _read_token(path: Path) -> str:
 
 
 def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
-               jobs: JobRegistry | None = None) -> FastAPI:
+               jobs: JobRegistry | None = None, http_probe=None) -> FastAPI:
     config = config or AgentConfig.from_env()
     runner = runner or LocalRunner()
+    http_probe = http_probe or default_probe
     state = state if state is not None else ThreadLocalState(config.state_db)
     jobs = jobs or JobRegistry()
     locks = ProjectLocks()
@@ -255,6 +258,11 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
             urls = urls_for(load(row["id"]), row["domain"])
         except ApiError as e:
             problem = {"code": e.code, "message": e.message}
+        if problem is None and row.get("problem_code"):
+            # A file that will not parse outranks a routing fault: it is why
+            # the project has no URLs to be unreachable on.
+            problem = {"code": row["problem_code"],
+                       "message": row["problem_message"]}
         return {"id": row["id"], "status": row["status"], "domain": row["domain"],
                 "path": row["guest_path"], "urls": urls, "problem": problem}
 
@@ -430,9 +438,26 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
                 write(f"compose up {project_id}\n")
                 status, _lifecycle_urls, detail = lifecycle.compose_up(
                     runner, project, directory, domain)
+                diagnosis = None
+                if status == STARTED_OK:
+                    write("waiting for the project to answer through Traefik\n")
+                    diagnosis = diagnose(
+                        runner, project, domain, edge_port=config.edge_port,
+                        traefik_host=config.traefik_host, http_probe=http_probe,
+                        timeout=config.ready_timeout)
                 state.set_status(project_id, status)
-                result = {"status": status, "urls": urls_for(project, domain)}
+                if diagnosis is None:
+                    state.set_problem(project_id)
+                else:
+                    state.set_problem(project_id, diagnosis.code,
+                                      diagnosis.message)
+                result = {"status": status, "urls": urls_for(project, domain),
+                          "problem": diagnosis.as_dict() if diagnosis else None}
                 write(f"status: {status}\n")
+                if diagnosis:
+                    # The containers did start, so the job succeeds; the reason
+                    # the URL will not answer belongs in its log all the same.
+                    write(f"{diagnosis.message}\n")
                 if detail:
                     write(f"{detail}\n")
                 if status != STARTED_OK:

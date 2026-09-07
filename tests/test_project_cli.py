@@ -174,3 +174,19 @@ def test_destroy_stays_loud_when_the_containers_could_not_be_stopped(monkeypatch
     result = runner.invoke(cli.app, ["destroy", "blog"])
     assert result.exit_code == 1
     assert "dockerd is not running" in result.output
+
+
+def test_up_warns_when_the_agent_could_not_reach_the_started_project(monkeypatch,
+                                                                    tmp_path):
+    # A URL printed with no warning is exactly the silent failure the agent's
+    # probe exists to end.
+    client = use(monkeypatch, FakeClient(job={
+        "state": "done",
+        "result": {"status": "started_ok",
+                   "urls": ["http://blog.127-0-0-1.sslip.io:39080"],
+                   "problem": {"code": "bound_to_loopback",
+                               "message": "listen on 0.0.0.0, not 127.0.0.1"}}}))
+    result = runner.invoke(cli.app, ["up", str(project_dir(tmp_path))])
+
+    assert result.exit_code == 0, "the containers did start"
+    assert "listen on 0.0.0.0" in result.output
