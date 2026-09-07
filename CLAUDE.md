@@ -17,7 +17,7 @@ and task plan; `.superpowers/sdd/` holds the per-task execution ledger.
 ```bash
 pip install -e ".[dev]"
 
-python3 -m pytest -q                                    # full suite (151 tests, ~0.3s)
+python3 -m pytest -q                                    # full suite (337 tests, ~5s)
 python3 -m pytest tests/agent/test_project.py -q        # one file
 python3 -m pytest -k classify -q                        # one test by name
 ```
@@ -52,7 +52,10 @@ need are declared twice and held equal by `tests/test_constants_agree.py`.
 ### Hard invariant: no platform branching outside `host/providers/`
 
 `tests/test_no_platform_leak.py` greps every `host/**/*.py` and `agent/**/*.py` outside
-`providers/` for `sys.platform`, `platform.system()`, `os.name` and fails on any hit.
+`providers/` for `sys.platform`, `platform.system()`, `os.name` and fails on any hit. Like the
+two import-boundary tests it resolves the tree from `__file__` and asserts it scanned something
+— a cwd-relative `Path("host")` passes vacuously from any other directory, which has now bitten
+this repo three times. Reach for repo files that way in every test.
 `host/providers/__init__.py` is the single place the host platform is resolved
 (`get_provider()`, `default_install_dir()`).
 Do not add an `if windows` anywhere else — push the difference into a provider method.
@@ -119,6 +122,11 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   `docker` group (`stack.yml`'s `group_add`). `bootstrap.sh` therefore `chgrp`s `/opt/omelet` to
   `docker` and sets setgid on its directories *before* `compose up`; skip that and the agent
   cannot open `/opt/omelet/state.db` and `restart: always` crash-loops it.
+- **The agent holds no project paths of its own.** `agent/core/lifecycle.py` builds every compose
+  `-f` path from the directory the API hands it (`Path(config.projects_root) / project_id`), never
+  from `constants.GUEST_PROJECTS` — the two used to disagree, so `OMELET_PROJECTS_ROOT` uploaded
+  into one directory and ran compose against another. `compose_up` returns `(status, detail)`;
+  URLs are built in `app.py`, the only place holding the configured edge port.
 - **Guest failures must stay loud.** `provider.exec()` returns a `Completed` and never raises, so
   every caller has to check `.ok` itself. `bootstrap.py` routes its calls through `_run()`, which
   raises `BootstrapError` carrying the guest's stderr, and re-reads the marker afterwards to catch a
@@ -144,7 +152,11 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   just before it: an agent older than `constants.EXPECTED_AGENT_VERSION` (the tag in
   `AGENT_IMAGE`) is re-provisioned once with `bootstrap(force=True)` — the guest marker that
   normally skips bootstrap is exactly what leaves an upgraded host talking to an old agent —
-  and only then reported, in one sentence rather than as a 404 minutes later.
+  and only then reported, in one sentence rather than as a 404 minutes later. The same step also
+  recovers an agent that answers `agent_unconfigured` or `unauthorized`: `/health` is exempt from
+  the token check, so `restart: always` never restarts a container refusing every other route, and
+  the agent reads its token **once, at startup** — which is why the recovery re-provisions *and*
+  `bootstrap.restart_agent`s the container, then re-reads the token before dialling again.
 - CLI command bodies use **function-local imports** deliberately (keeps `omelet --help` and the
   smoke test fast, and avoids importing provider code on unsupported hosts). `cli._provider_factory`
   is a module attribute so tests can monkeypatch the provider.
