@@ -20,6 +20,10 @@ EDGE_PORT = 39080
 # every project URL it prints comes from the agent's own payload.
 DEFAULT_DOMAIN = "127-0-0-1.sslip.io"
 VERIFY_PROJECT_ID = "omelet-selftest"
+# The agent decides what a project must contain; the host only needs the name to
+# refuse an empty folder before uploading it. Declared on both sides so the
+# constants test fails if the agent ever accepts a second spelling.
+COMPOSE_FILE = "docker-compose.yml"
 
 # Bootstrap is purely host-side provisioning; the agent never reads any of these.
 # Bump the version whenever host/provision/bootstrap.sh changes, or every
@@ -27,7 +31,7 @@ VERIFY_PROJECT_ID = "omelet-selftest"
 BOOTSTRAP_VERSION = 5
 BOOTSTRAP_MARKER = f"{GUEST_ROOT}/.bootstrapped"
 
-# Where the pushed copy of agent/deploy/stack.yml lands. Compose reads its
+# Where the pushed copy of host/provision/stack.yml lands. Compose reads its
 # interpolation values from a `.env` beside the compose file, which is why
 # bootstrap.sh writes one directly under GUEST_ROOT too; no host code opens
 # that file, so it has no constant here.

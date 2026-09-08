@@ -74,7 +74,7 @@ message verbatim.
 ## Step 4 — end to end
 
 ```bash
-omelet up ./agent/templates/nginx-hello
+omelet up ./host/provision/nginx-hello
 ```
 
 Record the printed URL, then:

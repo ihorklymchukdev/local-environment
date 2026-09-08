@@ -16,7 +16,7 @@ from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from ..core import files, lifecycle
+from ..core import constants, files, lifecycle
 from ..core.config import AgentConfig
 from ..core.detect import AmbiguousError
 from ..core.exec import LocalRunner
@@ -219,10 +219,10 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
 
     def load(project_id: str) -> Project:
         d = project_dir(project_id)
-        compose_path = d / "docker-compose.yml"
+        compose_path = d / constants.COMPOSE_FILE
         if not compose_path.exists():
             raise ApiError("compose_missing",
-                           f"project '{project_id}' has no docker-compose.yml", 400)
+                           f"project '{project_id}' has no {constants.COMPOSE_FILE}", 400)
         project_yml = d / ".omelet" / "project.yml"
         overrides = parse_yaml(project_yml) if project_yml.exists() else None
         try:

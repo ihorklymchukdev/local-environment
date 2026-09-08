@@ -9,6 +9,10 @@ cpus: 4
 memory: "4GiB"
 disk: "60GiB"
 mounts: []
+# Only the two fixed ports live here. A user's distinct-port forward (a
+# database in the VM on a host port that is free) is made at runtime through
+# the ssh control master -- see LimaProvider.forward -- so it needs no edit
+# here and no VM restart.
 portForwards:
   - guestPort: 39080
     hostPort: 39080

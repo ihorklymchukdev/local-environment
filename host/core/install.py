@@ -10,8 +10,8 @@ from typing import Callable
 # Resolved from this module rather than from cli.py: cli.py is the frozen
 # entry script, whose __file__ points at the bundle root instead of at
 # host/, so an entry-script lookup misses the bundled template.
-VERIFY_TEMPLATE = (Path(__file__).resolve().parent.parent.parent
-                    / "agent" / "templates" / "nginx-hello")
+VERIFY_TEMPLATE = (Path(__file__).resolve().parent.parent
+                    / "provision" / "nginx-hello")
 
 
 class InstallState:

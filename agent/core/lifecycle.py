@@ -6,6 +6,7 @@ import base64
 # PATH, and a bare `docker` would send this VM's projects to Desktop's engine.
 DOCKER = "/usr/bin/docker"
 
+from .constants import COMPOSE_FILE
 from .project import Project, FAILED_TO_START, STARTED_OK, classify, overlay_yaml
 
 # Every path here comes from the caller's project directory, never from
@@ -17,7 +18,7 @@ from .project import Project, FAILED_TO_START, STARTED_OK, classify, overlay_yam
 
 def _compose_argv(directory) -> list[str]:
     return [DOCKER, "compose",
-            "-f", f"{directory}/docker-compose.yml",
+            "-f", f"{directory}/{COMPOSE_FILE}",
             "-f", f"{directory}/.omelet/overlay.yml",
             "up", "-d"]
 
@@ -45,7 +46,7 @@ def compose_up(provider, project: Project, directory, domain: str):
                 or "could not write the Traefik overlay inside the VM")
     up = provider.exec(_compose_argv(directory), root=True)
     ps = provider.exec([DOCKER, "compose", "-f",
-                        f"{directory}/docker-compose.yml",
+                        f"{directory}/{COMPOSE_FILE}",
                         "ps", "--format", "json"], root=True)
     status = classify(up, ps.stdout)
     detail = "" if status == STARTED_OK else (up.stderr or up.stdout or ps.stderr).strip()
@@ -53,7 +54,7 @@ def compose_up(provider, project: Project, directory, domain: str):
 
 
 def compose_down(provider, directory):
-    return provider.exec([DOCKER, "compose", "-f", f"{directory}/docker-compose.yml",
+    return provider.exec([DOCKER, "compose", "-f", f"{directory}/{COMPOSE_FILE}",
                           "-f", f"{directory}/.omelet/overlay.yml", "down"],
                          root=True)
 
@@ -62,7 +63,7 @@ def container_id(provider, directory, service: str) -> str:
     """Empty string when compose cannot resolve one — the project was never
     started, or the container is already gone. Callers hedge, they don't raise."""
     result = provider.exec([DOCKER, "compose", "-f",
-                            f"{directory}/docker-compose.yml",
+                            f"{directory}/{COMPOSE_FILE}",
                             "ps", "-q", service], root=True)
     lines = result.stdout.split() if result.ok else []
     return lines[0] if lines else ""
@@ -70,7 +71,7 @@ def container_id(provider, directory, service: str) -> str:
 
 def logs_argv(directory, service: str | None = None, *,
               follow: bool = False) -> list[str]:
-    argv = [DOCKER, "compose", "-f", f"{directory}/docker-compose.yml",
+    argv = [DOCKER, "compose", "-f", f"{directory}/{COMPOSE_FILE}",
             "logs", "--no-color"]
     if follow:
         argv.append("--follow")
