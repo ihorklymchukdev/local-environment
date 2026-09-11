@@ -17,7 +17,7 @@ and task plan; `.superpowers/sdd/` holds the per-task execution ledger.
 ```bash
 pip install -e ".[dev]"
 
-python3 -m pytest -q                                    # full suite (401 tests, ~6s)
+python3 -m pytest -q                                    # full suite (422 tests, ~6s)
 python3 -m pytest tests/agent/test_project.py -q        # one file
 python3 -m pytest -k classify -q                        # one test by name
 ```
@@ -85,7 +85,8 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   over the agent API with the guest token. One stdlib-only file, loaded by tests by path
   (`tests/guest/loader.py`); it shares constants with both sides, held equal by
   `tests/test_constants_agree.py`. `host/provision/agents/` holds what those agents read
-  (`omelet.md`, the `omelet-setup` skill); `bootstrap.sh` step 8 and `install-agents.sh`
+  (`omelet.md`, the `omelet-setup` skill); `bootstrap.sh` step 8, `login-users.sh` (which
+  account is a real login, not a system service) and `install-agents.sh`
   copy them into each agent's discovery paths (`/etc/claude-code/CLAUDE.md`,
   `/etc/codex/skills`, `~/.claude/skills`, `~/.agents/skills`, a marked block in
   `~/.codex/AGENTS.md`). Nothing is written into user repositories.
