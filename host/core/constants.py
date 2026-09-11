@@ -28,7 +28,7 @@ COMPOSE_FILE = "docker-compose.yml"
 # Bootstrap is purely host-side provisioning; the agent never reads any of these.
 # Bump the version whenever host/provision/bootstrap.sh changes, or every
 # existing VM silently skips the new provisioning.
-BOOTSTRAP_VERSION = 5
+BOOTSTRAP_VERSION = 6
 BOOTSTRAP_MARKER = f"{GUEST_ROOT}/.bootstrapped"
 
 # Where the pushed copy of host/provision/stack.yml lands. Compose reads its

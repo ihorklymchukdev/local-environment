@@ -7,6 +7,11 @@ a = Analysis(
     datas=[
         ("../../host/provision/bootstrap.sh", "host/provision"),
         ("../../host/provision/stack.yml", "host/provision"),
+        ("../../host/provision/guest/omelet.py", "host/provision/guest"),
+        ("../../host/provision/install-agents.sh", "host/provision"),
+        ("../../host/provision/agents/omelet.md", "host/provision/agents"),
+        ("../../host/provision/agents/skills/omelet-setup/SKILL.md",
+         "host/provision/agents/skills/omelet-setup"),
         ("../../host/provision/nginx-hello/docker-compose.yml",
          "host/provision/nginx-hello"),
         ("../../host/providers/omelet.yaml", "host/providers"),

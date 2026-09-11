@@ -194,3 +194,16 @@ def test_bootstrap_writes_this_vms_real_docker_gid_for_the_stack():
         "the GID must be read from the VM, not assumed"
     assert not any(re.search(r"OMELET_DOCKER_GID=[0-9]", l) for l in commands), \
         "a literal GID is the bug this guards against"
+
+
+def test_bootstrap_installs_the_agent_files_where_the_host_pushes_them():
+    # The host pushes to guest_assets()'s paths and the script reads them by
+    # literal path; two independent spellings install nothing, silently.
+    import posixpath
+    from host.core.bootstrap import guest_assets
+
+    remotes = {local.name: remote for local, remote in guest_assets()}
+    text = "\n".join(_commands())
+    assert remotes["omelet.py"] in text
+    assert remotes["install-agents.sh"] in text
+    assert posixpath.dirname(remotes["omelet.md"]) in text

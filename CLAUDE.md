@@ -17,7 +17,7 @@ and task plan; `.superpowers/sdd/` holds the per-task execution ledger.
 ```bash
 pip install -e ".[dev]"
 
-python3 -m pytest -q                                    # full suite (365 tests, ~6s)
+python3 -m pytest -q                                    # full suite (401 tests, ~6s)
 python3 -m pytest tests/agent/test_project.py -q        # one file
 python3 -m pytest -k classify -q                        # one test by name
 ```
@@ -80,6 +80,15 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   has no agent yet. `bootstrap.sh` installs docker-ce from the official repo, the `edge` network, `/opt/omelet`
   made group-writable, then `docker compose -f /opt/omelet/stack.yml pull && up -d`. The list of
   pushed files is `host/core/bootstrap.guest_assets()`, which `cli.selfcheck` also reads.
+- `host/provision/guest/omelet.py` — the `omelet` command **inside** the VM, used by coding
+  agents (Claude Code, Codex, …) working there: `up`/`new`/`clone`/`status`/`logs`/`down`
+  over the agent API with the guest token. One stdlib-only file, loaded by tests by path
+  (`tests/guest/loader.py`); it shares constants with both sides, held equal by
+  `tests/test_constants_agree.py`. `host/provision/agents/` holds what those agents read
+  (`omelet.md`, the `omelet-setup` skill); `bootstrap.sh` step 8 and `install-agents.sh`
+  copy them into each agent's discovery paths (`/etc/claude-code/CLAUDE.md`,
+  `/etc/codex/skills`, `~/.claude/skills`, `~/.agents/skills`, a marked block in
+  `~/.codex/AGENTS.md`). Nothing is written into user repositories.
 - `agent/api/` — the FastAPI app the host talks to. `app.py::create_app(config, runner, state)` is
   a factory on purpose (no module-level `app`, so importing it opens no sqlite file); `jobs.py` is
   the in-process job registry that keeps slow compose work off the request; `__main__.py` is the
@@ -120,6 +129,10 @@ Do not add an `if windows` anywhere else — push the difference into a provider
 - **Bootstrap idempotency is a version marker**, `/opt/omelet/.bootstrapped` compared against
   `host.core.constants.BOOTSTRAP_VERSION`. **Bump `BOOTSTRAP_VERSION` whenever
   `host/provision/bootstrap.sh` changes**, or existing VMs silently skip the new bootstrap.
+- **A change to the guest CLI or to `host/provision/agents/` needs a `BOOTSTRAP_VERSION` bump**
+  just like `bootstrap.sh` does: the marker is the only thing that makes an existing VM
+  re-provision. Each pushed asset must also fit one `wsl.exe` command line
+  (`test_every_pushed_asset_fits_one_guest_command_line`).
 - **Nothing under `agent/` is bundled into the frozen host binary**, and
   `tests/host/test_frozen_bundle.py` fails if a `datas` entry reappears. `stack.yml` and the
   `nginx-hello` verify fixture live under `host/provision/` for that reason: the host pushes them

@@ -8,6 +8,8 @@ from host.core import constants
 
 _GUEST_DIR = f"{constants.GUEST_ROOT}/bin"
 _GUEST_SCRIPT = f"{_GUEST_DIR}/bootstrap.sh"
+_GUEST_AGENTS = f"{constants.GUEST_ROOT}/agents"
+_SKILL = "skills/omelet-setup/SKILL.md"
 # Repo root from source, sys._MEIPASS from a frozen build -- both layouts put
 # the bundled assets under the same host/ and agent/ prefixes.
 _ROOT = Path(__file__).resolve().parent.parent.parent
@@ -31,6 +33,10 @@ def guest_assets() -> tuple[tuple[Path, str], ...]:
     return (
         (_ASSETS / "bootstrap.sh", _GUEST_SCRIPT),
         (_ASSETS / "stack.yml", constants.GUEST_STACK),
+        (_ASSETS / "guest" / "omelet.py", f"{_GUEST_DIR}/omelet"),
+        (_ASSETS / "install-agents.sh", f"{_GUEST_DIR}/install-agents.sh"),
+        (_ASSETS / "agents" / "omelet.md", f"{_GUEST_AGENTS}/omelet.md"),
+        (_ASSETS / "agents" / _SKILL, f"{_GUEST_AGENTS}/{_SKILL}"),
     )
 
 

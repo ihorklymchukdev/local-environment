@@ -119,10 +119,11 @@ def test_push_file_strips_crlf_so_bash_can_read_the_script(tmp_path, monkeypatch
     # A Windows checkout (core.autocrlf) turns bootstrap.sh into CRLF. Bash then
     # reads line 2 as `set -euo pipefail\r` and aborts with "invalid option
     # name" -- which is exactly how the first real Windows build failed.
+    import shutil
     import host.core.bootstrap as bs
 
     crlf_assets = tmp_path / "guest"
-    crlf_assets.mkdir()
+    shutil.copytree(bs._ASSETS, crlf_assets)
     (crlf_assets / "bootstrap.sh").write_bytes(b"#!/usr/bin/env bash\r\nset -euo pipefail\r\n")
     (crlf_assets / "stack.yml").write_bytes(b"services:\r\n  agent:\r\n")
     monkeypatch.setattr(bs, "_ASSETS", crlf_assets)
@@ -157,3 +158,14 @@ def test_a_failed_agent_restart_is_reported_with_the_guests_own_error():
     with pytest.raises(BootstrapError) as excinfo:
         restart_agent(p)
     assert "no such service: agent" in str(excinfo.value)
+
+
+def test_every_pushed_asset_fits_one_guest_command_line():
+    # _push_file sends each asset base64-encoded inside one `wsl.exe -- bash -lc`
+    # argument, and Windows caps the whole command line at 32,767 characters.
+    import base64
+    from host.core.bootstrap import guest_assets
+    for local, remote in guest_assets():
+        encoded = base64.b64encode(local.read_bytes().replace(b"\r\n", b"\n"))
+        assert len(encoded) + 2 * len(remote) + 200 < 32_767, (
+            f"{local.name} is too big to push into the VM in one command")
