@@ -206,4 +206,5 @@ def test_bootstrap_installs_the_agent_files_where_the_host_pushes_them():
     text = "\n".join(_commands())
     assert remotes["omelet.py"] in text
     assert remotes["install-agents.sh"] in text
+    assert remotes["login-users.sh"] in text
     assert posixpath.dirname(remotes["omelet.md"]) in text

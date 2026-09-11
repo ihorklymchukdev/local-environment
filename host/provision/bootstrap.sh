@@ -122,12 +122,10 @@ cp -r /opt/omelet/agents/skills/omelet-setup /etc/codex/skills/
 # way a non-root user can read the agent token.
 bash /opt/omelet/bin/install-agents.sh /opt/omelet/agents /root 0:0
 bash /opt/omelet/bin/install-agents.sh /opt/omelet/agents /etc/skel 0:0
-while IFS=: read -r name _ uid gid _ home _; do
-  if (( uid >= 1000 && uid < 60000 )) && [[ -d "$home" ]]; then
-    usermod -aG docker "$name"
-    bash /opt/omelet/bin/install-agents.sh /opt/omelet/agents "$home" "$uid:$gid"
-  fi
-done < <(getent passwd)
+while IFS=: read -r name uid gid home; do
+  usermod -aG docker "$name"
+  bash /opt/omelet/bin/install-agents.sh /opt/omelet/agents "$home" "$uid:$gid"
+done < <(getent passwd | bash /opt/omelet/bin/login-users.sh /etc/shells)
 
 # 9. marker, last: a failure above must leave no marker behind.
 echo "$WANT_VERSION" > /opt/omelet/.bootstrapped

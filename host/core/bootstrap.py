@@ -35,6 +35,7 @@ def guest_assets() -> tuple[tuple[Path, str], ...]:
         (_ASSETS / "stack.yml", constants.GUEST_STACK),
         (_ASSETS / "guest" / "omelet.py", f"{_GUEST_DIR}/omelet"),
         (_ASSETS / "install-agents.sh", f"{_GUEST_DIR}/install-agents.sh"),
+        (_ASSETS / "login-users.sh", f"{_GUEST_DIR}/login-users.sh"),
         (_ASSETS / "agents" / "omelet.md", f"{_GUEST_AGENTS}/omelet.md"),
         (_ASSETS / "agents" / _SKILL, f"{_GUEST_AGENTS}/{_SKILL}"),
     )
