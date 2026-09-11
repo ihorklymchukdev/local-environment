@@ -15,16 +15,19 @@ yourself and never ask them about technology.
 |---|---|
 | A repository URL | `omelet clone <url>` — it also starts the project if it can |
 | An archive (zip, tar) | unpack it so its `docker-compose.yml` sits directly in `~/projects/<name>/` |
-| A folder already in `~/projects` | nothing — go to step 3 |
+| A folder already in `~/projects` | go to step 2 if it has no `docker-compose.yml`, otherwise step 3 |
 | A folder elsewhere in the VM | move it into `~/projects/` |
 | A description of an app | `omelet new <name>`, then build it there following step 2 |
 
 If `omelet up` asks you to rename the folder, rename it to the name it gives
-and run `omelet up` again.
+and run `omelet up` again. If it says the project's compose file has another
+name (`compose.yaml`, `compose.yml`, `docker-compose.yaml`), rename that file
+to `docker-compose.yml` and run `omelet up` again.
 
-If `omelet clone` says it could not download the repository, it is private.
-Tell the user in plain words that the repository needs access; do not ask for
-tokens or keys unprompted.
+If `omelet clone` could not download the repository, read git's message. For a
+missing or private repository, tell the user in plain words that it cannot be
+reached and needs access or a correct link; do not ask for tokens or keys
+unprompted.
 
 ## 2. Writing a compose file (new apps, or projects without one)
 

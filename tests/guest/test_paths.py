@@ -74,3 +74,33 @@ def test_a_missing_omelet_folder_is_created_writable(root):
     project.mkdir()
     cli.prepare_overlay_dir(project, os.getgid())
     assert stat.S_IMODE((project / ".omelet").stat().st_mode) == 0o2775
+
+
+def test_a_symlinked_omelet_dir_is_refused(root, tmp_path):
+    project = root / "blog"
+    project.mkdir(parents=True)
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    target.chmod(0o700)
+    (project / ".omelet").symlink_to(target)
+
+    with pytest.raises(cli.OmeletError, match="symbolic link"):
+        cli.prepare_overlay_dir(project, os.getgid())
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o700
+
+
+def test_a_symlinked_overlay_file_is_refused(root, tmp_path):
+    project = root / "blog"
+    omelet_dir = project / ".omelet"
+    omelet_dir.mkdir(parents=True)
+    omelet_dir.chmod(0o755)
+    target = tmp_path / "secret.yml"
+    target.write_text("secret")
+    target.chmod(0o600)
+    (omelet_dir / "overlay.yml").symlink_to(target)
+
+    with pytest.raises(cli.OmeletError, match="symbolic link"):
+        cli.prepare_overlay_dir(project, os.getgid())
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600

@@ -1,8 +1,13 @@
 import threading
 import time
 
+import pytest
+
 from agent.core.exec import Completed
 from tests.agent.test_api_routes import COMPOSE_MALFORMED, COMPOSE_ONE_WEB
+from tests.guest.loader import load
+
+cli = load()
 
 
 def _project(guest, name="blog", compose=COMPOSE_ONE_WEB):
@@ -48,6 +53,17 @@ def test_a_second_up_restarts_an_already_registered_project(guest):
     assert len(_compose_ups(guest.runner)) == 2
 
 
+@pytest.mark.parametrize("alt_name", ["compose.yaml", "compose.yml", "docker-compose.yaml"])
+def test_a_compose_file_under_another_name_is_named_not_reported_missing(guest, alt_name):
+    folder = guest.root / "blog"
+    folder.mkdir()
+    (folder / alt_name).write_text(COMPOSE_ONE_WEB)
+    code, _out, err = guest.run("up", cwd=folder)
+    assert code == 1
+    assert alt_name in err
+    assert "Omelet reads only docker-compose.yml" in err
+
+
 def test_a_broken_compose_file_is_reported_in_the_agents_own_words(guest):
     folder = _project(guest, compose=COMPOSE_MALFORMED)
     code, _out, err = guest.run("up", cwd=folder)
@@ -90,6 +106,16 @@ def test_status_names_folders_that_are_not_set_up_yet(guest):
     assert "Not set up yet (run `omelet up` in each): shop" in out
 
 
+def test_a_leftover_selftest_folder_is_never_listed_as_not_set_up(guest):
+    # install.verify_step deletes the self-test project through the agent but
+    # leaves its folder behind; every fresh VM would otherwise offer it to the
+    # first agent that runs `omelet status`.
+    (guest.root / cli.VERIFY_PROJECT_ID).mkdir()
+    code, out, _err = guest.run("status", cwd=guest.root)
+    assert code == 0
+    assert cli.VERIFY_PROJECT_ID not in out
+
+
 def test_status_inside_an_unregistered_folder_says_how_to_set_it_up(guest):
     (guest.root / "shop").mkdir()
     code, out, _err = guest.run("status", cwd=guest.root / "shop")
@@ -102,3 +128,12 @@ def test_logs_and_down_outside_a_project_say_where_to_run_them(guest):
         code, _out, err = guest.run(command, cwd=guest.root)
         assert code == 1
         assert "inside a project folder" in err
+        assert "~/projects (/opt/omelet/projects)" in err
+
+
+def test_up_outside_the_projects_root_names_the_real_path_too(guest, tmp_path):
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    code, _out, err = guest.run("up", cwd=outside)
+    assert code == 1
+    assert "~/projects (/opt/omelet/projects)" in err

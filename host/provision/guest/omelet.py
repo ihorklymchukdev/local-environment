@@ -27,9 +27,17 @@ AGENT_PORT = 39099
 GUEST_ROOT = "/opt/omelet"
 GUEST_PROJECTS = f"{GUEST_ROOT}/projects"
 GUEST_TOKEN = f"{GUEST_ROOT}/agent.token"
+GUEST_STACK = f"{GUEST_ROOT}/stack.yml"
 COMPOSE_FILE = "docker-compose.yml"
+# Compose accepts these too; Omelet does not, so a project written under one of
+# them must be named, not reported as if it had no compose file at all.
+_ALT_COMPOSE_FILES = ("compose.yaml", "compose.yml", "docker-compose.yaml")
 # The agent container's only credential shared with this VM.
 DOCKER_GROUP = "docker"
+# Reserved for the setup smoke test; install.verify_step deletes the project
+# through the agent but leaves its folder behind, so this keeps it out of the
+# "Not set up yet" list on every fresh VM.
+VERIFY_PROJECT_ID = "omelet-selftest"
 
 
 class OmeletError(Exception):
@@ -86,6 +94,12 @@ def prepare_overlay_dir(project: Path, gid: int) -> None:
     """
     omelet_dir = project / ".omelet"
     overlay = omelet_dir / "overlay.yml"
+    for path in (omelet_dir, overlay):
+        if path.is_symlink():
+            raise OmeletError(
+                f"{path} is a symbolic link; Omelet will not change "
+                "permissions through it. Remove the link and run the "
+                "command again.")
     try:
         omelet_dir.mkdir(exist_ok=True)
         os.chown(omelet_dir, -1, gid)
@@ -107,7 +121,7 @@ JOB_POLL_INTERVAL = 1.0
 BUSY_RETRY_TIMEOUT = 60.0
 BUSY_RETRY_INTERVAL = 1.0
 
-START_STACK = "sudo /usr/bin/docker compose -f /opt/omelet/stack.yml up -d"
+START_STACK = f"sudo /usr/bin/docker compose -f {GUEST_STACK} up -d"
 # The agent reads its token once, at startup, so only a recreate picks up a new one.
 RESTART_AGENT = f"{START_STACK} --force-recreate agent"
 _GUIDANCE = {
@@ -274,12 +288,25 @@ def _project_here(env: Env, directory: str | None) -> tuple[Path, str] | None:
 def _require_project(env: Env) -> str:
     found = _project_here(env, None)
     if found is None:
-        raise OmeletError("Run this inside a project folder in ~/projects.")
+        raise OmeletError("Run this inside a project folder in "
+                          f"~/projects ({GUEST_PROJECTS}).")
     return found[1]
+
+
+def _alt_compose_file(folder: Path) -> str | None:
+    for name in _ALT_COMPOSE_FILES:
+        if (folder / name).is_file():
+            return name
+    return None
 
 
 def _start(env: Env, folder: Path, project_id: str) -> None:
     if not (folder / COMPOSE_FILE).is_file():
+        alt = _alt_compose_file(folder)
+        if alt:
+            raise OmeletError(
+                f"This project's compose file is {alt}; Omelet reads only "
+                f"{COMPOSE_FILE}. Rename it and run the command again.")
         raise OmeletError(f"There is no {COMPOSE_FILE} in {folder}.")
     prepare_overlay_dir(folder, env.gid())
     agent = env.agent()
@@ -317,8 +344,9 @@ def _print_project(env: Env, project: dict) -> None:
 def cmd_up(env: Env, directory: str | None) -> None:
     found = _project_here(env, directory)
     if found is None:
-        raise OmeletError("Projects live in ~/projects. Move this folder there, "
-                          "or start a new one with `omelet new <name>`.")
+        raise OmeletError(
+            f"Projects live in ~/projects ({GUEST_PROJECTS}). Move this folder "
+            "there, or start a new one with `omelet new <name>`.")
     _start(env, *found)
 
 
@@ -341,7 +369,8 @@ def cmd_status(env: Env, directory: str | None) -> None:
     known = {project["id"] for project in projects}
     waiting = sorted(d.name for d in env.root.iterdir()
                      if d.is_dir() and not d.name.startswith(".")
-                     and d.name not in known) if env.root.is_dir() else []
+                     and d.name not in known
+                     and d.name != VERIFY_PROJECT_ID) if env.root.is_dir() else []
     if waiting:
         print("Not set up yet (run `omelet up` in each): " + ", ".join(waiting),
               file=env.out)
@@ -377,13 +406,23 @@ def _new_folder(env: Env, name: str) -> Path:
 
 
 def cmd_new(env: Env, name: str) -> None:
+    # Reads the token first, so a user without docker-group access gets that
+    # sentence instead of an empty folder no agent call can ever use.
+    env.agent()
     folder = _new_folder(env, name)
-    folder.mkdir()
+    try:
+        folder.mkdir()
+    except OSError as e:
+        raise OmeletError(
+            f"Omelet could not create {folder} ({e.strerror}).") from None
     print(f"Created {folder}. Put the project's files there, "
           "then run `omelet up` in it.", file=env.out)
 
 
 def cmd_clone(env: Env, url: str, name: str | None) -> None:
+    # Same reason as cmd_new: fail on the docker-group sentence before git
+    # ever runs, rather than have git's own permission error read as "private".
+    env.agent()
     folder = _new_folder(env, name or repo_name(url))
     # A coding agent's shell has no terminal to answer a credential prompt,
     # so a private repository must fail instead of hanging.
@@ -391,7 +430,7 @@ def cmd_clone(env: Env, url: str, name: str | None) -> None:
                      {**os.environ, "GIT_TERMINAL_PROMPT": "0"})
     if result.returncode != 0:
         raise OmeletError(f"Could not download {url}:\n{(result.stderr or '').strip()}")
-    if (folder / COMPOSE_FILE).is_file():
+    if (folder / COMPOSE_FILE).is_file() or _alt_compose_file(folder):
         _start(env, folder, folder.name)
     else:
         print(f"Downloaded to {folder}. It has no {COMPOSE_FILE} yet; one must "
