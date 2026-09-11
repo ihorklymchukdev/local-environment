@@ -97,3 +97,302 @@ def prepare_overlay_dir(project: Path, gid: int) -> None:
         raise OmeletError(
             f"Omelet could not make {omelet_dir} writable for itself "
             f"({e.strerror}). Run the command as the folder's owner.") from None
+
+
+REQUEST_TIMEOUT = 30.0
+LOGS_TIMEOUT = 120.0
+# `up` pulls or builds images, which is minutes, not seconds.
+JOB_TIMEOUT = 1800.0
+JOB_POLL_INTERVAL = 1.0
+BUSY_RETRY_TIMEOUT = 60.0
+BUSY_RETRY_INTERVAL = 1.0
+
+START_STACK = "sudo /usr/bin/docker compose -f /opt/omelet/stack.yml up -d"
+# The agent reads its token once, at startup, so only a recreate picks up a new one.
+RESTART_AGENT = f"{START_STACK} --force-recreate agent"
+_GUIDANCE = {
+    "unauthorized": f"The Omelet service needs a restart. Run: {RESTART_AGENT}",
+    "agent_unconfigured": f"The Omelet service needs a restart. Run: {RESTART_AGENT}",
+}
+
+
+class AgentError(OmeletError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+class JobFailed(OmeletError):
+    def __init__(self, message: str, result: dict | None):
+        super().__init__(message)
+        self.result = result or {}
+
+
+def read_token(path: Path) -> str:
+    try:
+        token = path.read_text().strip()
+    except PermissionError:
+        raise OmeletError(
+            "This user can't reach Omelet: it must be in the docker group. "
+            "Run `sudo usermod -aG docker $USER` and start a new session.") from None
+    except OSError:
+        token = ""
+    if not token:
+        raise OmeletError("Omelet is not set up in this VM yet. "
+                          "Run `omelet setup` on your computer.")
+    return token
+
+
+def _agent_error(exc: urllib.error.HTTPError) -> AgentError:
+    """Every non-2xx body from the agent is {"error": {"code", "message"}};
+    anything else on this port must still read as a sentence."""
+    try:
+        error = json.loads(exc.read().decode("utf-8", "replace"))["error"]
+        code, message = str(error["code"]), str(error["message"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return AgentError("http_error", f"The Omelet service answered HTTP "
+                                        f"{exc.code} ({exc.reason}).")
+    guidance = _GUIDANCE.get(code)
+    return AgentError(code, f"{guidance} (the service said: {message})"
+                      if guidance else message)
+
+
+class Agent:
+    """The agent API over the same HTTP contract host/client.py speaks."""
+
+    def __init__(self, token: str, *, base_url: str = f"http://127.0.0.1:{AGENT_PORT}",
+                 opener=None, sleep=time.sleep, monotonic=time.monotonic):
+        self._token = token
+        self._base = base_url
+        self._opener = opener or urllib.request.build_opener()
+        self._sleep = sleep
+        self._monotonic = monotonic
+
+    def _open(self, method: str, path: str, *, payload: dict | None = None,
+              timeout: float = REQUEST_TIMEOUT) -> str:
+        data = json.dumps(payload).encode("utf-8") if payload is not None else None
+        request = urllib.request.Request(self._base + path, data=data, method=method)
+        request.add_header("Authorization", f"Bearer {self._token}")
+        if data is not None:
+            request.add_header("Content-Type", "application/json")
+        try:
+            with self._opener.open(request, timeout=timeout) as response:
+                return response.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            raise _agent_error(e) from None
+        except (urllib.error.URLError, OSError):
+            raise OmeletError("The Omelet service in this VM is not answering. "
+                              f"Start it with: {START_STACK}") from None
+
+    def _call(self, method: str, path: str, payload: dict | None = None) -> dict:
+        body = self._open(method, path, payload=payload)
+        return json.loads(body) if body.strip() else {}
+
+    def _while_busy(self, call):
+        """`project_busy`: another operation holds the project's lock."""
+        deadline = self._monotonic() + BUSY_RETRY_TIMEOUT
+        while True:
+            try:
+                return call()
+            except AgentError as e:
+                if e.code != "project_busy" or self._monotonic() >= deadline:
+                    raise
+            self._sleep(BUSY_RETRY_INTERVAL)
+
+    def _wait(self, job_id: str) -> dict:
+        deadline = self._monotonic() + JOB_TIMEOUT
+        while True:
+            job = self._call("GET", f"/jobs/{job_id}")
+            state = job.get("state")
+            if state == "done":
+                return job
+            if state == "failed":
+                raise JobFailed(job.get("detail") or "the operation failed inside the VM",
+                                job.get("result"))
+            if self._monotonic() >= deadline:
+                raise OmeletError(f"Omelet was still working after "
+                                  f"{JOB_TIMEOUT / 60:.0f} minutes. Run "
+                                  "`omelet status` to see where it got to.")
+            self._sleep(JOB_POLL_INTERVAL)
+
+    def ensure_project(self, project_id: str) -> None:
+        try:
+            self._call("POST", "/projects", {"id": project_id})
+        except AgentError as e:
+            if e.code != "project_exists":
+                raise
+
+    def project(self, project_id: str) -> dict:
+        return self._call("GET", f"/projects/{project_id}")
+
+    def projects(self) -> list[dict]:
+        return self._call("GET", "/projects").get("projects", [])
+
+    def up(self, project_id: str) -> dict:
+        started = self._while_busy(
+            lambda: self._call("POST", f"/projects/{project_id}/up"))
+        return self._wait(started["job_id"])
+
+    def down(self, project_id: str) -> dict:
+        started = self._while_busy(
+            lambda: self._call("POST", f"/projects/{project_id}/down"))
+        return self._wait(started["job_id"])
+
+    def logs(self, project_id: str, service: str | None = None) -> str:
+        path = f"/projects/{project_id}/logs"
+        if service:
+            path += f"?service={urllib.parse.quote(service)}"
+        return self._open("GET", path, timeout=LOGS_TIMEOUT)
+
+
+def _default_agent() -> Agent:
+    return Agent(read_token(Path(GUEST_TOKEN)))
+
+
+def _run_git(argv: list[str], env: dict) -> subprocess.CompletedProcess:
+    return subprocess.run(argv, env=env, capture_output=True, text=True)
+
+
+@dataclass
+class Env:
+    """Everything a command touches besides its arguments, so tests can point
+    it at a temporary projects root and an in-process agent."""
+    root: Path = Path(GUEST_PROJECTS)
+    cwd: Path = field(default_factory=Path.cwd)
+    agent: Callable[[], Agent] = _default_agent
+    gid: Callable[[], int] = docker_gid
+    git: Callable[[list[str], dict], subprocess.CompletedProcess] = _run_git
+    out: TextIO = field(default_factory=lambda: sys.stdout)
+    err: TextIO = field(default_factory=lambda: sys.stderr)
+
+
+def _project_here(env: Env, directory: str | None) -> tuple[Path, str] | None:
+    folder = project_of(env.cwd / directory if directory else env.cwd, env.root)
+    return (folder, require_id(folder)) if folder else None
+
+
+def _require_project(env: Env) -> str:
+    found = _project_here(env, None)
+    if found is None:
+        raise OmeletError("Run this inside a project folder in ~/projects.")
+    return found[1]
+
+
+def _start(env: Env, folder: Path, project_id: str) -> None:
+    if not (folder / COMPOSE_FILE).is_file():
+        raise OmeletError(f"There is no {COMPOSE_FILE} in {folder}.")
+    prepare_overlay_dir(folder, env.gid())
+    agent = env.agent()
+    agent.ensure_project(project_id)
+    print(f"Starting {project_id}…", file=env.out)
+    try:
+        job = agent.up(project_id)
+    except JobFailed as e:
+        status = e.result.get("status", "failed")
+        raise OmeletError(f"{project_id} did not start (status: {status}).\n{e}\n"
+                          "To see what it printed, run: omelet logs") from None
+    result = job.get("result") or {}
+    urls = result.get("urls") or []
+    for url in urls:
+        print(f"  {url}", file=env.out)
+    if not urls:
+        print(f"{project_id} started. No service is exposed over HTTP.", file=env.out)
+    problem = result.get("problem")
+    if problem:
+        # The containers are up, so this is no failure -- but the URL above
+        # will not answer until this is fixed.
+        print(problem["message"], file=env.out)
+
+
+def _print_project(env: Env, project: dict) -> None:
+    urls = project.get("urls") or []
+    print(f"{project['id']:<20} {project['status']:<16} "
+          f"{urls[0] if urls else ''}".rstrip(), file=env.out)
+    for url in urls[1:]:
+        print(f"    {url}", file=env.out)
+    if project.get("problem"):
+        print(f"    problem: {project['problem']['message']}", file=env.out)
+
+
+def cmd_up(env: Env, directory: str | None) -> None:
+    found = _project_here(env, directory)
+    if found is None:
+        raise OmeletError("Projects live in ~/projects. Move this folder there, "
+                          "or start a new one with `omelet new <name>`.")
+    _start(env, *found)
+
+
+def cmd_status(env: Env, directory: str | None) -> None:
+    agent = env.agent()
+    found = _project_here(env, directory)
+    if found is not None:
+        project_id = found[1]
+        try:
+            _print_project(env, agent.project(project_id))
+        except AgentError as e:
+            if e.code != "project_not_found":
+                raise
+            print(f"{project_id} is not set up yet. Run `omelet up` in it.",
+                  file=env.out)
+        return
+    projects = agent.projects()
+    for project in projects:
+        _print_project(env, project)
+    known = {project["id"] for project in projects}
+    waiting = sorted(d.name for d in env.root.iterdir()
+                     if d.is_dir() and not d.name.startswith(".")
+                     and d.name not in known) if env.root.is_dir() else []
+    if waiting:
+        print("Not set up yet (run `omelet up` in each): " + ", ".join(waiting),
+              file=env.out)
+    elif not projects:
+        print("No projects yet.", file=env.out)
+
+
+def cmd_logs(env: Env, service: str | None) -> None:
+    print(env.agent().logs(_require_project(env), service), end="", file=env.out)
+
+
+def cmd_down(env: Env) -> None:
+    project_id = _require_project(env)
+    env.agent().down(project_id)
+    print(f"{project_id} stopped.", file=env.out)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="omelet",
+        description="Run projects in this VM behind Omelet's router. Projects "
+                    "live in ~/projects, one folder each. Start them only with "
+                    "`omelet up`, never `docker compose up`.")
+    sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
+    up = sub.add_parser("up", help="start or restart the project in this folder "
+                                   "and print its URL")
+    up.add_argument("directory", nargs="?")
+    status = sub.add_parser("status", help="show this project, or every project")
+    status.add_argument("directory", nargs="?")
+    logs = sub.add_parser("logs", help="show what this project's containers printed")
+    logs.add_argument("service", nargs="?")
+    sub.add_parser("down", help="stop the project in this folder")
+    return parser
+
+
+def main(argv: list[str] | None = None, env: Env | None = None) -> int:
+    args = _parser().parse_args(argv)
+    env = env or Env()
+    commands = {
+        "up": lambda: cmd_up(env, args.directory),
+        "status": lambda: cmd_status(env, args.directory),
+        "logs": lambda: cmd_logs(env, args.service),
+        "down": lambda: cmd_down(env),
+    }
+    try:
+        commands[args.command]()
+    except OmeletError as e:
+        print(str(e), file=env.err)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
