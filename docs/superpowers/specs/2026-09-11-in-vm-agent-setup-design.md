@@ -248,18 +248,23 @@ something else, in which case it leaves it alone and logs one line.
 
 ## 7. Provisioning changes
 
-- `bootstrap.guest_assets()` gains three entries:
+- `bootstrap.guest_assets()` gains four entries:
   `guest/omelet.py` → `/opt/omelet/bin/omelet`,
+  `install-agents.sh` → `/opt/omelet/bin/install-agents.sh`,
   `agents/omelet.md` → `/opt/omelet/agents/omelet.md`,
   `agents/skills/omelet-setup/SKILL.md` →
   `/opt/omelet/agents/skills/omelet-setup/SKILL.md`.
   `cli.selfcheck` already verifies every entry of that list.
-- `packaging/windows/omelet.spec` bundles the same three files under
+- `packaging/windows/omelet.spec` bundles the same four files under
   `host/provision/`.
+- `install-agents.sh <agents-dir> <home> <uid:gid>` does the per-home half of
+  §6.3/§6.4 (both skill copies, the Codex marker block, the `~/projects` link),
+  kept out of `bootstrap.sh` so it can be run against a temporary home in tests.
 - `bootstrap.sh` gains one step after Docker is installed: `apt-get install -y
   git` if missing; fail loudly if `python3` is missing; `install -m 755
-  /opt/omelet/bin/omelet /usr/local/bin/omelet`; the adapter table (§6.3); the
-  target-user loop (§6.4).
+  /opt/omelet/bin/omelet /usr/local/bin/omelet`; the system-wide rows of the
+  adapter table (§6.3); `install-agents.sh` for root, `/etc/skel` and each
+  target user, plus `usermod -aG docker` (§6.4).
 - `BOOTSTRAP_VERSION` 5 → 6. Any later change to the CLI or the Markdown bumps
   it again — the marker is the only thing that makes an existing VM re-run.
 
@@ -292,10 +297,12 @@ Only tests that can catch a real regression:
   group-writable; nothing outside `.omelet/` changes.
 - **Constant agreement, stdlib-only boundary, asset size** — each asset in
   `guest_assets()` fits the push budget.
-- **`bootstrap.sh`**, extended in `test_bootstrap_shell.py`: `bash -n` passes;
-  the text installs the CLI to `/usr/local/bin/omelet`, writes
-  `/etc/claude-code/CLAUDE.md`, `/etc/codex/skills/omelet-setup`, the Codex
-  marker block, `~/.claude/skills` and `~/.agents/skills`, and installs git.
+- **`install-agents.sh`** run against a temporary home: the skill lands in both
+  per-user locations; a second run replaces the Codex block while keeping the
+  user's own text (including a last line with no newline); `~/projects` is
+  linked once and an existing real folder is left alone.
+- **`bootstrap.sh`**: `bash -n` passes (existing test), and the paths it installs
+  from are the ones `guest_assets()` pushes to, so the two cannot drift.
 
 Not tested automatically: the Markdown (no logic), and whether agents follow it.
 That is the acceptance run below.
