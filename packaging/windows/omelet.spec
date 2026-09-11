@@ -6,11 +6,15 @@ a = Analysis(
     pathex=["../.."],
     datas=[
         ("../../host/provision/bootstrap.sh", "host/provision"),
-        ("../../agent/deploy/stack.yml", "agent/deploy"),
-        ("../../agent/templates/nginx-hello/docker-compose.yml",
-         "agent/templates/nginx-hello"),
+        ("../../host/provision/stack.yml", "host/provision"),
+        ("../../host/provision/nginx-hello/docker-compose.yml",
+         "host/provision/nginx-hello"),
         ("../../host/providers/omelet.yaml", "host/providers"),
     ],
+    # Nothing from agent/ is bundled: it ships as an image the VM pulls, and
+    # tests/host/test_frozen_bundle.py fails if an entry reappears. Every dest
+    # above mirrors the repo path its reader resolves from __file__, so the
+    # bundle and a source checkout look identical to the code.
     hiddenimports=["host.setup_app.app"],
 )
 pyz = PYZ(a.pure)

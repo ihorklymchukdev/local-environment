@@ -118,6 +118,43 @@ def vm_destroy():
     typer.echo("VM destroyed.")
 
 
+port = typer.Typer(help="Reach a port inside the VM from this machine.",
+                   no_args_is_help=True)
+app.add_typer(port, name="port")
+
+
+@port.command("add")
+def port_add(guest_port: int, host_port: int):
+    """Reach the VM's GUEST_PORT on this machine's HOST_PORT.
+
+    For the ports the VM does not publish itself -- a database, a queue, a
+    debugger -- so a tool on this machine can connect to one.
+    """
+    with _vm_errors():
+        _provider().forward(guest_port, host_port)
+    typer.echo(f"localhost:{host_port} now reaches port {guest_port} in the VM.")
+
+
+@port.command("remove")
+def port_remove(guest_port: int, host_port: int):
+    """Stop reaching the VM's GUEST_PORT on HOST_PORT."""
+    with _vm_errors():
+        _provider().unforward(guest_port, host_port)
+    typer.echo(f"localhost:{host_port} no longer reaches the VM.")
+
+
+@port.command("list")
+def port_list():
+    """Show every port forward currently in place."""
+    with _vm_errors():
+        pairs = _provider().forwards()
+    if not pairs:
+        typer.echo("No port forwards.")
+        return
+    for guest_port, host_port in pairs:
+        typer.echo(f"localhost:{host_port} -> {guest_port} in the VM")
+
+
 from pathlib import Path as _Path
 
 
@@ -125,12 +162,13 @@ from pathlib import Path as _Path
 def up(directory: str = typer.Argument(".", help="Project directory with a docker-compose.yml")):
     """Bring a compose project up and print its URL(s)."""
     from host.client import JobFailedError, project_id_for
+    from host.core.constants import COMPOSE_FILE
 
     local = _Path(directory).resolve()
-    if not (local / "docker-compose.yml").is_file():
+    if not (local / COMPOSE_FILE).is_file():
         # Checked here so an empty folder is not registered as a project the
         # agent then has to refuse.
-        typer.echo(f"There is no docker-compose.yml in {local}.", err=True)
+        typer.echo(f"There is no {COMPOSE_FILE} in {local}.", err=True)
         raise typer.Exit(code=1)
     project_id = project_id_for(local.name)
 
@@ -325,7 +363,7 @@ def selfcheck():
     # deleted traefik.yml stayed in the bundle with nothing failing.
     checks = [("/".join(local.parts[-3:]), local) for local, _remote in guest_assets()]
     checks += [
-        ("agent/templates/nginx-hello/docker-compose.yml",
+        ("host/provision/nginx-hello/docker-compose.yml",
          VERIFY_TEMPLATE / "docker-compose.yml"),
         ("host/providers/omelet.yaml", Path(_providers.__file__).parent / "omelet.yaml"),
     ]

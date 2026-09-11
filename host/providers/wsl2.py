@@ -16,6 +16,9 @@ _RESUME_VALUE_NAME = "OmeletSetup"
 # The user clicked No on the UAC prompt (ERROR_CANCELLED).
 ELEVATION_DECLINED = 1223
 
+# Both ends of a portproxy rule; see the forwarding section below.
+LOOPBACK = "127.0.0.1"
+
 # Absent off Windows, where this module is still imported by the test suite.
 # 0 is "no extra creation flags", which is what every non-Windows Popen wants.
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -226,14 +229,82 @@ class Wsl2Provider:
                          p.stdout.decode("utf-8", "replace").strip("\n"),
                          p.stderr.decode("utf-8", "replace").strip("\n"))
 
+    # --- port forwarding ---
+    #
+    # `netsh interface portproxy` writes to HKLM and needs administrator
+    # rights, so every call here goes through the same elevator the installer
+    # uses for `wsl --install`. There is deliberately no second UAC pathway.
+    #
+    # Both sides of the proxy are 127.0.0.1: localhostForwarding already puts
+    # a guest port listening on 0.0.0.0 onto host loopback at the same number,
+    # so the proxy only has to move it to a different number. Pointing it at
+    # the VM's own address instead would leave a rule behind that stops working
+    # the next time the VM boots with a different one.
+
+    @staticmethod
+    def _delete_rule(host_port: int) -> str:
+        return ("netsh interface portproxy delete v4tov4 "
+                f"listenaddress={LOOPBACK} listenport={host_port}")
+
+    @staticmethod
+    def _add_rule(guest_port: int, host_port: int) -> str:
+        return ("netsh interface portproxy add v4tov4 "
+                f"listenaddress={LOOPBACK} listenport={host_port} "
+                f"connectaddress={LOOPBACK} connectport={guest_port}")
+
+    def _netsh(self, *rules: str) -> int:
+        """Run the rules in one elevated shell and return the last one's code.
+
+        One invocation, not one per rule: each trip through the elevator is its
+        own UAC prompt, and `cmd /c a & b` exits with b's code -- which is what
+        makes a delete of a rule that is not there free rather than fatal.
+        """
+        return self._elevate("cmd.exe", ["/c", " & ".join(rules)])
+
     def forward(self, guest_port: int, host_port: int) -> None:
-        # WSL2 localhostForwarding surfaces guest 0.0.0.0:<port> on host
-        # localhost:<same port>. The edge port is chosen equal on both sides,
-        # so no action is required here. Distinct raw-TCP forwards
-        # (guest_port != host_port) are added in a later milestone via netsh.
-        if guest_port != host_port:
-            raise NotImplementedError(
-                "distinct-port forwarding on WSL2 is not part of the PoC slice")
+        if guest_port == host_port:
+            # localhostForwarding already covers this; a proxy on top would add
+            # a hop, and a UAC prompt, for nothing.
+            return
+        # `add` refuses an address/port it already listens on, and says so in
+        # the console's own language, so the error cannot be matched. Deleting
+        # first makes the pair idempotent by construction.
+        code = self._netsh(self._delete_rule(host_port),
+                           self._add_rule(guest_port, host_port))
+        if code == ELEVATION_DECLINED:
+            raise RuntimeError(
+                f"forwarding port {host_port} to {guest_port} in the VM needs "
+                "administrator approval (the permission prompt was dismissed).")
+        if code != 0:
+            raise RuntimeError(
+                f"port {host_port} could not be forwarded to {guest_port} in "
+                f"the VM (code {code}). Another program may already be "
+                f"listening on {host_port}.")
+
+    def unforward(self, guest_port: int, host_port: int) -> None:
+        if guest_port == host_port:
+            return
+        # Not checked: netsh exits non-zero for a rule that is not there, and
+        # releasing a forward nobody added is the expected case on cleanup.
+        self._netsh(self._delete_rule(host_port))
+
+    def forwards(self) -> list[tuple[int, int]]:
+        """Every (guest_port, host_port) pair Windows is currently proxying.
+
+        netsh keeps this table in the registry, so it survives a reboot and is
+        the only record of what was allocated -- and the only thing `unforward`
+        can be driven from. `show` needs no elevation. The header rows are
+        localized; the four-column shape of a data row is not, so the parse
+        keys on that instead of on any word.
+        """
+        p = self._run(["netsh", "interface", "portproxy", "show", "v4tov4"])
+        out = []
+        for line in p.stdout.decode("utf-8", "replace").splitlines():
+            parts = line.split()
+            if len(parts) != 4 or not (parts[1].isdigit() and parts[3].isdigit()):
+                continue
+            out.append((int(parts[3]), int(parts[1])))
+        return out
 
     def preflight(self) -> Diagnosis:
         return preflight_checks(**self._facts())

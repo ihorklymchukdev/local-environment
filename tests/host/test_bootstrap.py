@@ -126,7 +126,6 @@ def test_push_file_strips_crlf_so_bash_can_read_the_script(tmp_path, monkeypatch
     (crlf_assets / "bootstrap.sh").write_bytes(b"#!/usr/bin/env bash\r\nset -euo pipefail\r\n")
     (crlf_assets / "stack.yml").write_bytes(b"services:\r\n  agent:\r\n")
     monkeypatch.setattr(bs, "_ASSETS", crlf_assets)
-    monkeypatch.setattr(bs, "_DEPLOY", crlf_assets)
 
     p = FakeProvider(marker_value="")
     bootstrap(p)

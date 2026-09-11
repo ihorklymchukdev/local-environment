@@ -44,9 +44,9 @@ RUN if getent group "${DOCKER_GID}" >/dev/null; then \
 
 WORKDIR /app
 
-# Only the installable package, not agent/templates (host-side verify fixture)
-# or agent/deploy (compose manifests, not Python) -- neither belongs in the
-# image.
+# Only the installable package. The compose manifests that deploy this image,
+# and the verify fixture, live under host/provision: the host pushes them into
+# a VM that has no agent yet, so they cannot ship inside the agent.
 COPY pyproject.toml /app/
 COPY __init__.py /app/
 COPY core /app/core

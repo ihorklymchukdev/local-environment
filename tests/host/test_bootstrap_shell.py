@@ -60,7 +60,7 @@ def test_smoke_test_template_publishes_no_host_port():
     # with "failed to bind host port 0.0.0.0:8080/tcp: address already in use".
     import yaml
     compose = yaml.safe_load(
-        (ROOT / "agent" / "templates" / "nginx-hello"
+        (ROOT / "host" / "provision" / "nginx-hello"
          / "docker-compose.yml").read_text())
     for name, svc in compose["services"].items():
         assert not svc.get("ports"), f"{name} publishes a host port"

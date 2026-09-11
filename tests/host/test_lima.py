@@ -40,6 +40,18 @@ def test_create_calls_start_with_config():
                            "--tty=false", "/tmp/omelet.yaml"]
 
 
+def test_a_failed_vm_command_raises_instead_of_reporting_success():
+    # `_cmd()` returns a Completed and never raises, so an unchecked result is
+    # a silent success -- `omelet vm start` printing "VM started." for a VM
+    # limactl refused to boot. The WSL2 provider learned this the hard way.
+    import pytest
+
+    with pytest.raises(RuntimeError, match="could not be started"):
+        make(FakeRunner(returncode=1)).start()
+    with pytest.raises(RuntimeError, match="could not be created"):
+        make(FakeRunner(returncode=1)).create()
+
+
 def test_stop_and_destroy():
     r = FakeRunner()
     p = make(r)
@@ -51,9 +63,10 @@ def test_stop_and_destroy():
 
 def test_the_lima_config_forwards_exactly_the_ports_the_host_dials():
     # The literals in omelet.yaml are the only thing making the guest sockets
-    # reachable from the host, and equal ports on both sides is a design
-    # invariant (`forward()` refuses anything else). Held against the
-    # constants, not against another copy of the literals.
+    # reachable from the host. Both are declared equal on the two sides on
+    # purpose; a distinct-port forward is made at runtime over ssh instead and
+    # never belongs in this file. Held against the constants, not against
+    # another copy of the literals.
     import re
     from pathlib import Path
 

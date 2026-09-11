@@ -17,7 +17,7 @@ and task plan; `.superpowers/sdd/` holds the per-task execution ledger.
 ```bash
 pip install -e ".[dev]"
 
-python3 -m pytest -q                                    # full suite (337 tests, ~5s)
+python3 -m pytest -q                                    # full suite (365 tests, ~6s)
 python3 -m pytest tests/agent/test_project.py -q        # one file
 python3 -m pytest -k classify -q                        # one test by name
 ```
@@ -74,8 +74,10 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   failed job into `JobFailedError` carrying the guest's own stderr.
 - `agent/core/` — all platform-free logic: compose parsing, web detection, Traefik overlay
   generation, project identity, failure classification, guest lifecycle, sqlite state.
-- `host/provision/` — `bootstrap.sh`, the only host-side asset pushed into the VM alongside
-  `agent/deploy/stack.yml`: docker-ce from the official repo, the `edge` network, `/opt/omelet`
+- `host/provision/` — every asset the host pushes into the VM: `bootstrap.sh` and `stack.yml`
+  (plus `nginx-hello/`, the installer's verify fixture). They live under `host/` because the
+  agent never reads them and its image never contains them — the host pushes them into a VM that
+  has no agent yet. `bootstrap.sh` installs docker-ce from the official repo, the `edge` network, `/opt/omelet`
   made group-writable, then `docker compose -f /opt/omelet/stack.yml pull && up -d`. The list of
   pushed files is `host/core/bootstrap.guest_assets()`, which `cli.selfcheck` also reads.
 - `agent/api/` — the FastAPI app the host talks to. `app.py::create_app(config, runner, state)` is
@@ -103,6 +105,9 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   `lifecycle.push_project` (base64 through `bash -lc`, and its ~24 KB command-line ceiling) is gone.
   `bootstrap._push_file` still base64s its two assets through `bash -lc`: it runs before the agent
   exists.
+- **`omelet port add/remove/list` is the only caller of `forward()`.** Without it the
+  distinct-port machinery would be dead code the Protocol still advertises. Ports the VM publishes
+  itself (the edge port) need no entry here.
 - **The host CLI holds no project logic.** Compose parsing, web detection, URLs and project state
   are all agent-side; `host/cli.py` creates the project, uploads it, starts a job, polls, and prints
   what comes back. Its error messages are the agent's own sentences — never a status code.
@@ -115,6 +120,10 @@ Do not add an `if windows` anywhere else — push the difference into a provider
 - **Bootstrap idempotency is a version marker**, `/opt/omelet/.bootstrapped` compared against
   `host.core.constants.BOOTSTRAP_VERSION`. **Bump `BOOTSTRAP_VERSION` whenever
   `host/provision/bootstrap.sh` changes**, or existing VMs silently skip the new bootstrap.
+- **Nothing under `agent/` is bundled into the frozen host binary**, and
+  `tests/host/test_frozen_bundle.py` fails if a `datas` entry reappears. `stack.yml` and the
+  `nginx-hello` verify fixture live under `host/provision/` for that reason: the host pushes them
+  into a VM that has no agent yet, so they cannot ship inside the agent image.
 - **The host and the agent each own a `constants.py`**, because nothing under `host/` may import
   `agent/`. `tests/test_constants_agree.py` holds every name declared in both modules equal — add
   a shared constant to one and it must go into the other with the same value.
@@ -132,9 +141,14 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   raises `BootstrapError` carrying the guest's stderr, and re-reads the marker afterwards to catch a
   script that exited 0 without finishing. Dropping an `exec` result turns a multi-minute provisioning
   failure into a silent `VM ready.` — that bug already happened once.
-- **`forward(guest, host)` intentionally raises `NotImplementedError` when the ports differ.** The
-  edge port is equal on both sides by design (WSL2 localhostForwarding / Lima `portForwards`), and
-  dynamic distinct-port forwarding is out of the PoC slice. Don't "fix" it without a decision.
+- **`forward(guest, host)` is a no-op when the ports are equal**, on both platforms: WSL2
+  localhostForwarding and Lima's `portForwards` already cover the edge port, and a proxy on top
+  would add a hop and, on Windows, a UAC prompt. Distinct ports are real forwards — WSL2 writes a
+  `netsh interface portproxy` rule between two loopback ports through the installer's existing
+  elevator (never a second UAC pathway), Lima asks its ssh control master for a tunnel. Both
+  delete-then-add, so a repeat is idempotent without parsing a localized error. `forwards()` is
+  netsh's registry table on Windows and always empty on Lima, where the tunnels die with the VM —
+  the asymmetry is the mechanism, not a gap.
 - **URLs** are `http://<project-id>.127-0-0-1.sslip.io:39080`. With multiple web services, the first
   keeps the bare project host and the rest get a `<service>.` subdomain prefix — see
   `project.load_project` / `overlay.host_for`.
@@ -145,7 +159,7 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   two versions of itself. A held project answers 409 `project_busy`; the host client retries that
   itself (`_while_busy`), rewinding the archive per attempt. Reads are never locked.
 - **`install.verify_step` is the installer's smoke test and a real HTTP 200**, not "the job
-  succeeded": it drives `agent/templates/nginx-hello` through `AgentClient` under the reserved id
+  succeeded": it drives `host/provision/nginx-hello` through `AgentClient` under the reserved id
   `omelet-selftest` (never derived from the template's folder name, or a re-run could tear down a
   user project), polls the URL for `READY_TIMEOUT` seconds because Traefik publishes a router a beat
   after the container starts, and deletes the project in a `finally`. `agent_version_step` runs

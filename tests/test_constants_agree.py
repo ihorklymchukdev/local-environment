@@ -37,7 +37,7 @@ def test_agent_image_matches_the_stack_files_default():
     import re
     from pathlib import Path
 
-    stack = Path(__file__).resolve().parent.parent / "agent" / "deploy" / "stack.yml"
+    stack = Path(__file__).resolve().parent.parent / "host" / "provision" / "stack.yml"
     match = re.search(r"\$\{OMELET_AGENT_IMAGE:-([^}]+)\}", stack.read_text())
     assert match, "stack.yml must default OMELET_AGENT_IMAGE"
     assert match[1] == host_constants.AGENT_IMAGE

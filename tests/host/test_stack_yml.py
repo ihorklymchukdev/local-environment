@@ -4,7 +4,7 @@ import yaml
 
 from pathlib import Path
 
-STACK = Path(__file__).resolve().parents[2] / "agent" / "deploy" / "stack.yml"
+STACK = Path(__file__).resolve().parents[2] / "host" / "provision" / "stack.yml"
 
 # Compose interpolation: ${VAR} or ${VAR:-default}. Stripping the whole
 # expression, not just the default, is what makes the "no bare literal" test

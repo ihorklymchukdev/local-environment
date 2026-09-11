@@ -11,10 +11,10 @@ _GUEST_SCRIPT = f"{_GUEST_DIR}/bootstrap.sh"
 # Repo root from source, sys._MEIPASS from a frozen build -- both layouts put
 # the bundled assets under the same host/ and agent/ prefixes.
 _ROOT = Path(__file__).resolve().parent.parent.parent
+# stack.yml lives here rather than beside the agent because the agent never
+# reads it and its image never contains it: it is the manifest the host pushes
+# so a VM with no agent yet can start one.
 _ASSETS = _ROOT / "host" / "provision"
-# stack.yml is referenced by path, not imported: it is the agent's deployment
-# manifest and duplicating it under host/ would guarantee drift.
-_DEPLOY = _ROOT / "agent" / "deploy"
 
 
 class BootstrapError(RuntimeError):
@@ -30,7 +30,7 @@ def guest_assets() -> tuple[tuple[Path, str], ...]:
     """
     return (
         (_ASSETS / "bootstrap.sh", _GUEST_SCRIPT),
-        (_DEPLOY / "stack.yml", constants.GUEST_STACK),
+        (_ASSETS / "stack.yml", constants.GUEST_STACK),
     )
 
 
