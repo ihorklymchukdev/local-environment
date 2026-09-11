@@ -359,6 +359,45 @@ def cmd_down(env: Env) -> None:
     print(f"{project_id} stopped.", file=env.out)
 
 
+def repo_name(url: str) -> str:
+    """The last path segment without `.git`, for https and scp-style URLs alike."""
+    return re.split(r"[/:]", url.rstrip("/"))[-1].removesuffix(".git")
+
+
+def _new_folder(env: Env, name: str) -> Path:
+    project_id = project_id_for(name)
+    if not project_id:
+        raise OmeletError(f"'{name}' cannot be a project name. "
+                          "Use letters, digits and dashes.")
+    folder = env.root / project_id
+    if folder.exists():
+        raise OmeletError(f"{folder} already exists. Pick another name, "
+                          "or run `omelet up` in it.")
+    return folder
+
+
+def cmd_new(env: Env, name: str) -> None:
+    folder = _new_folder(env, name)
+    folder.mkdir()
+    print(f"Created {folder}. Put the project's files there, "
+          "then run `omelet up` in it.", file=env.out)
+
+
+def cmd_clone(env: Env, url: str, name: str | None) -> None:
+    folder = _new_folder(env, name or repo_name(url))
+    # A coding agent's shell has no terminal to answer a credential prompt,
+    # so a private repository must fail instead of hanging.
+    result = env.git(["git", "clone", "--", url, str(folder)],
+                     {**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+    if result.returncode != 0:
+        raise OmeletError(f"Could not download {url}:\n{(result.stderr or '').strip()}")
+    if (folder / COMPOSE_FILE).is_file():
+        _start(env, folder, folder.name)
+    else:
+        print(f"Downloaded to {folder}. It has no {COMPOSE_FILE} yet; one must "
+              "be written before `omelet up`.", file=env.out)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="omelet",
@@ -374,6 +413,12 @@ def _parser() -> argparse.ArgumentParser:
     logs = sub.add_parser("logs", help="show what this project's containers printed")
     logs.add_argument("service", nargs="?")
     sub.add_parser("down", help="stop the project in this folder")
+    new = sub.add_parser("new", help="create an empty project folder in ~/projects")
+    new.add_argument("name")
+    clone = sub.add_parser("clone", help="download a git repository into "
+                                         "~/projects and start it")
+    clone.add_argument("url")
+    clone.add_argument("name", nargs="?")
     return parser
 
 
@@ -385,6 +430,8 @@ def main(argv: list[str] | None = None, env: Env | None = None) -> int:
         "status": lambda: cmd_status(env, args.directory),
         "logs": lambda: cmd_logs(env, args.service),
         "down": lambda: cmd_down(env),
+        "new": lambda: cmd_new(env, args.name),
+        "clone": lambda: cmd_clone(env, args.url, args.name),
     }
     try:
         commands[args.command]()
