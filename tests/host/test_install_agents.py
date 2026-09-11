@@ -54,3 +54,14 @@ def test_the_projects_link_is_made_once_and_a_real_folder_is_left_alone(tmp_path
     result = _install(taken)
     assert (taken / "projects").is_dir() and not (taken / "projects").is_symlink()
     assert "left" in result.stdout
+
+
+def test_a_projects_link_pointing_elsewhere_is_left_alone_and_reported(tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "projects").symlink_to(elsewhere)
+    result = _install(home)
+    assert os.readlink(home / "projects") == str(elsewhere)
+    assert "left" in result.stdout
