@@ -60,17 +60,18 @@ def test_step_names_and_order_match_the_spec(tmp_path):
                      "create_vm", "bootstrap", "agent", "verify", "finish"]
 
 
-def test_rootfs_is_set_even_when_fetch_image_is_skipped(tmp_path):
+def test_rootfs_is_set_outside_the_download_step(tmp_path):
     # The bug: rootfs was only assigned as a side effect inside fetch_image, so
-    # any re-run after a failure reached create_vm with rootfs=None forever.
+    # any re-run where that step did not assign it reached create_vm with
+    # rootfs=None forever.
     state = InstallState(tmp_path / "state.json")
     for name in ("preflight", "remediate", "reboot_gate", "fetch_image"):
         state.mark(name)
 
     provider = FakeProvider(exists=False)
     steps = build(provider, tmp_path)
-    run(steps, state, {"bootstrap": lambda: None, "agent": lambda: None,
-                       "verify": lambda: None})
+    run(steps, state, {"fetch_image": lambda: None, "bootstrap": lambda: None,
+                       "agent": lambda: None, "verify": lambda: None})
 
     assert provider.rootfs == tmp_path / "cache" / "ubuntu-24.04.4-wsl-amd64.wsl"
     assert provider.created, "create_vm must succeed on a re-run, not raise on a None rootfs"
@@ -98,8 +99,7 @@ def test_the_proving_steps_run_again_on_a_re_run(tmp_path):
     events = run(build(provider, tmp_path), state, patch)
     assert ran == ["agent", "verify", "finish"], "verify must never be skipped"
     assert [e.step for e in events if e.status == "skipped"] == \
-        ["preflight", "remediate", "reboot_gate", "fetch_image", "create_vm",
-         "bootstrap"]
+        ["preflight", "remediate", "reboot_gate"]
 
 
 def test_finish_names_the_install_location_and_the_next_command(tmp_path):
@@ -136,3 +136,27 @@ def test_the_gate_registers_resume_before_asking_for_a_restart(tmp_path):
     with pytest.raises(RebootRequired):
         run(build(provider, tmp_path), state, {})
     assert provider.resumed_with == r"C:\Apps\Omelet\setup.exe"
+
+
+def test_a_vm_destroyed_outside_setup_is_rebuilt_on_a_re_run(tmp_path):
+    # The bug: install-state.json outlives the VM. A user who destroyed the
+    # distro and ran setup again saw "Creating the virtual machine ✓" (skipped)
+    # and then WSL_E_DISTRO_NOT_FOUND from bootstrap's first guest command.
+    state = InstallState(tmp_path / "state.json")
+    for name in ("preflight", "remediate", "reboot_gate", "fetch_image",
+                 "create_vm", "bootstrap"):
+        state.mark(name)
+
+    provider = FakeProvider(exists=False)
+    ran = []
+    events = run(build(provider, tmp_path), state,
+                 {"fetch_image": lambda: ran.append("fetch_image"),
+                  "bootstrap": lambda: ran.append("bootstrap"),
+                  "agent": lambda: None, "verify": lambda: None})
+
+    assert provider.created, "a missing VM must be created, whatever the state file says"
+    assert ran == ["fetch_image", "bootstrap"], \
+        "the rootfs and the guest stack must be re-derived, not assumed"
+    assert [e.step for e in events if e.status == "skipped"] == \
+        ["preflight", "remediate", "reboot_gate"], \
+        "only facts about this computer may be remembered across runs"

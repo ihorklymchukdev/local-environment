@@ -49,8 +49,10 @@ class Progress:
 class Step:
     name: str
     run: Callable[[], str | None]
-    # Steps that prove or report the outcome must run on every invocation,
-    # otherwise a re-run reports success without checking anything.
+    # Run on every invocation, never recorded as done. Two kinds of step need
+    # this: the ones that prove or report the outcome, and the ones whose
+    # product lives in the VM -- which can be destroyed without setup ever
+    # hearing about it, leaving the state file claiming a distro that is gone.
     always_run: bool = False
     # Plain-language next move for the user when this step fails.
     action: str = ""
@@ -390,9 +392,16 @@ def default_steps(provider, *, cache_dir, template_dir: Path, domain,
         step("preflight", lambda: preflight_step(provider)),
         step("remediate", lambda: remediate_step(provider)),
         step("reboot_gate", gate),
-        step("fetch_image", fetch_image),
-        step("create_vm", lambda: None if provider.exists() else provider.create()),
-        step("bootstrap", lambda: _bootstrap(provider)),
+        # Only the three steps above may be remembered across runs: they are
+        # facts about this computer. Everything below is a fact about the VM,
+        # and each re-derives it cheaply -- fetch() returns on a matching
+        # digest, create() on an existing distro, bootstrap() on a matching
+        # guest marker -- so re-running them costs seconds and skipping them
+        # costs a WSL_E_DISTRO_NOT_FOUND minutes later.
+        step("fetch_image", fetch_image, always_run=True),
+        step("create_vm", lambda: None if provider.exists() else provider.create(),
+             always_run=True),
+        step("bootstrap", lambda: _bootstrap(provider), always_run=True),
         # Before verify, not after: a host talking to an agent that predates
         # the routes it uses should say so in one sentence, not fail several
         # minutes into a compose run with a 404 on a route name.
