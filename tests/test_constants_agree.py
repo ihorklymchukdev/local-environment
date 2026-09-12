@@ -68,3 +68,18 @@ def test_the_agent_version_the_host_expects_is_the_one_the_image_reports():
     match = re.search(r"^ARG AGENT_VERSION=(\S+)", dockerfile.read_text(), re.M)
     assert match, "the Dockerfile must default AGENT_VERSION"
     assert match[1] == host_constants.EXPECTED_AGENT_VERSION == package_version
+
+
+def test_the_guest_cli_holds_the_same_values_as_the_host_and_the_agent():
+    # The guest CLI is copied into the VM on its own and can import neither
+    # side, so its copies of the shared names are held equal here.
+    from tests.guest.loader import load
+
+    guest = _public(load())
+    for side, other in (("agent", _public(agent_constants)),
+                        ("host", _public(host_constants))):
+        shared = sorted(set(guest) & set(other))
+        assert shared, f"the guest CLI shares no names with the {side}"
+        diverged = {name: (guest[name], other[name])
+                    for name in shared if guest[name] != other[name]}
+        assert not diverged, f"guest/{side} constants diverged: {diverged}"

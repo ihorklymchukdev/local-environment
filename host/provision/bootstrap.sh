@@ -102,6 +102,31 @@ if ! /usr/bin/docker compose -f /opt/omelet/stack.yml pull; then
 fi
 /usr/bin/docker compose -f /opt/omelet/stack.yml up -d
 
-# 8. marker, last: a failure above must leave no marker behind.
+# 8. coding agents: the in-VM `omelet` command, and what each agent reads.
+if ! dpkg -s git >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y git
+fi
+command -v python3 >/dev/null || { echo 'python3 is missing; the omelet command needs it' >&2; exit 1; }
+install -m 755 /opt/omelet/bin/omelet /usr/local/bin/omelet
+
+# System-wide where the agent has such a place, so which user runs the
+# session does not matter.
+install -d /etc/claude-code /etc/codex/skills
+install -m 644 /opt/omelet/agents/omelet.md /etc/claude-code/CLAUDE.md
+rm -rf /etc/codex/skills/omelet-setup
+cp -r /opt/omelet/agents/skills/omelet-setup /etc/codex/skills/
+
+# Per home where it is not: root (WSL sessions), every login account (Lima's
+# user) and /etc/skel for accounts made later. The docker group is the only
+# way a non-root user can read the agent token.
+bash /opt/omelet/bin/install-agents.sh /opt/omelet/agents /root 0:0
+bash /opt/omelet/bin/install-agents.sh /opt/omelet/agents /etc/skel 0:0
+while IFS=: read -r name uid gid home; do
+  usermod -aG docker "$name"
+  bash /opt/omelet/bin/install-agents.sh /opt/omelet/agents "$home" "$uid:$gid"
+done < <(getent passwd | bash /opt/omelet/bin/login-users.sh /etc/shells)
+
+# 9. marker, last: a failure above must leave no marker behind.
 echo "$WANT_VERSION" > /opt/omelet/.bootstrapped
 echo "bootstrap complete at version $WANT_VERSION"
