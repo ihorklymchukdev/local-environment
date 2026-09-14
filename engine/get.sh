@@ -40,8 +40,10 @@ main() {
     dpkg -s "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
   done
   if (( ${#missing[@]} )); then
-    apt-get update
-    apt-get install -y "${missing[@]}"
+    if ! apt-get update || ! apt-get install -y "${missing[@]}"; then
+      echo "could not install ${missing[@]}: the Ubuntu package mirrors may be unreachable" >&2
+      exit 1
+    fi
   fi
 
   local ref tmp
@@ -54,7 +56,10 @@ main() {
     echo "could not download Omelet engine $ref from $REPO" >&2
     exit 1
   fi
-  tar -xzf "$tmp/engine.tar.gz" -C "$tmp" --strip-components=1 --wildcards '*/engine/'
+  if ! tar -xzf "$tmp/engine.tar.gz" -C "$tmp" --strip-components=1 --wildcards '*/engine/' 2>/dev/null; then
+    echo "$ref of $REPO has no engine/ directory" >&2
+    exit 1
+  fi
   if [[ ! -f "$tmp/engine/install.sh" ]]; then
     echo "$ref of $REPO has no engine/install.sh" >&2
     exit 1

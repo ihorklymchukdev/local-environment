@@ -3,6 +3,7 @@ fetched the ways it is fetched. The download and apt steps need a network and
 are covered by the live-VM acceptance run."""
 import os
 import subprocess
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -97,3 +98,28 @@ def test_fetching_the_script_runs_the_install_not_just_its_functions(tmp_path, h
                                 capture_output=True, text=True)
     assert result.returncode != 0
     assert "could not download Omelet engine engine-v0.1.0" in result.stderr
+
+
+def test_an_archive_without_the_engine_is_a_plain_failure(tmp_path):
+    # Archive with GitHub shape (top-level directory) but no engine/ inside.
+    tar_path = tmp_path / "archive.tar.gz"
+    with tarfile.open(tar_path, "w:gz") as tar:
+        info = tarfile.TarInfo(name="local-environment-engine-v0.1.0/host/readme.txt")
+        info.size = 5
+        tar.addfile(tarinfo=info, fileobj=__import__("io").BytesIO(b"hello"))
+
+    def make_curl(archive_path):
+        # curl -fsSL <url> -o <dest>: $1=-fsSL $2=url $3=-o $4=dest
+        return f"cp '{archive_path}' \"$4\"\n"
+
+    environ = _bin(tmp_path, dpkg="exit 0\n", curl=make_curl(tar_path),
+                   git=_git_listing(tmp_path, ["engine-v0.1.0"]))
+    for name in ("OMELET_ENGINE_REF", "OMELET_ENGINE_REPAIR"):
+        environ.pop(name, None)
+
+    script = GET.read_text()
+    result = subprocess.run(["bash", "-c", script], env=environ,
+                            capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "engine-v0.1.0" in result.stderr
+    assert "no engine/" in result.stderr
