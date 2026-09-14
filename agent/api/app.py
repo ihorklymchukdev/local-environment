@@ -283,6 +283,7 @@ def create_app(*, config: AgentConfig | None = None, runner=None, state=None,
         return {
             "status": "ok",
             "version": config.version,
+            "api": constants.API_VERSION,
             "docker": {
                 "reachable": probe.ok,
                 "version": probe.stdout.strip() if probe.ok else "",

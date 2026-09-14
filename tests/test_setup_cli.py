@@ -62,7 +62,7 @@ def provisionable(monkeypatch):
     monkeypatch.setattr(download_mod, "fetch", lambda image, dest: dest)
     monkeypatch.setattr(bootstrap_mod, "bootstrap",
                         lambda provider, **kwargs: None)
-    monkeypatch.setattr(install_mod, "agent_version_step", lambda *a, **k: None)
+    monkeypatch.setattr(install_mod, "connect_step", lambda *a, **k: None)
     monkeypatch.setattr(install_mod, "verify_step", lambda *a, **k: None)
     return monkeypatch
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -125,10 +124,6 @@ def reboot_gate_step(provider) -> None:
         raise RebootRequired()
 
 
-class AgentTooOld(RuntimeError):
-    """The VM runs an older agent than this host was built against."""
-
-
 class AgentNotAccepted(RuntimeError):
     """The agent is serving, but refuses every authenticated call and a
     re-provision did not change that."""
@@ -140,76 +135,56 @@ class AgentNotAccepted(RuntimeError):
 _TOKEN_CODES = frozenset({"agent_unconfigured", "unauthorized"})
 
 
-def _version_tuple(version: str) -> tuple[int, ...] | None:
-    """The leading dotted integers, or None for anything that cannot be
-    ordered -- a locally built image tagged `dev`, a git sha."""
-    parts = []
-    for chunk in version.strip().split("."):
-        digits = re.match(r"\d+", chunk)
-        if digits is None:
-            break
-        parts.append(int(digits.group()))
-    return tuple(parts) or None
+class AgentIncompatible(RuntimeError):
+    """The agent serves an API number this host does not speak."""
 
 
-# `docker compose up -d` returns before the new agent container is serving, so
-# the first version read after an update legitimately answers "connection
+# `docker compose up -d` returns before the agent container is serving, so the
+# first call after an install or a repair legitimately answers "connection
 # refused".
 AGENT_RESTART_TIMEOUT = 30.0
 
 
-def _is_current(found: str, want: tuple[int, ...] | None) -> bool:
-    """A newer agent is deliberately not an error: routes are added rather
-    than removed, so an agent ahead of the host still answers everything it
-    asks for, and refusing one would break a host downgrade or a pre-release
-    image for no gain. A version that cannot be ordered is not an error either
-    -- refusing to set up over a string we cannot read is worse than
-    continuing."""
-    have = _version_tuple(found)
-    return want is None or have is None or have >= want
-
-
-def _version_once_serving(client, sleep, timeout: float) -> str:
+def _once_serving(call, sleep, timeout: float):
     from host.client import AgentUnavailableError
     deadline = time.monotonic() + timeout
     while True:
         try:
-            return client.version()
+            return call()
         except AgentUnavailableError:
             if time.monotonic() >= deadline:
                 raise
         sleep(1.0)
 
 
-def agent_version_step(provider, *, client=None, expected: str | None = None,
-                       repair=None, reconnect=None, sleep=time.sleep):
-    """Bring the VM's agent up to the version this host expects, or say why not.
+def connect_step(provider, *, client=None, reconnect=None, sleep=time.sleep):
+    """Check the agent speaks this host's API and accepts this host's token.
 
-    `repair` re-provisions the guest stack (`compose pull && up -d`) and is
-    tried once: without it the only exit from an older agent is destroying the
-    VM, which discards every project in it.
-
-    `reconnect` is the same idea for an agent that is serving but refuses every
-    authenticated call. It re-provisions *and* recreates the agent container --
-    the token is read once at startup, so re-provisioning alone leaves the
-    running container refusing exactly the same calls -- then returns a client
-    holding the token the VM has now. Returning None keeps the current client.
+    `reconnect` reinstalls the engine in repair mode -- recreating the agent so
+    it re-reads its token -- and returns a client holding the token the VM has
+    now. Returning None keeps the current client.
     """
     from host.client import AgentClient, AgentError
     from host.core import constants
 
-    expected = expected or constants.EXPECTED_AGENT_VERSION
     client = client or AgentClient.for_provider(provider)
-    want = _version_tuple(expected)
-    reconnected = False
+    # Agents from before the field serve exactly the api 1 routes.
+    api = _once_serving(client.health, sleep, AGENT_RESTART_TIMEOUT).get("api", 1)
+    if api not in constants.SUPPORTED_API:
+        supported = ", ".join(str(n) for n in sorted(constants.SUPPORTED_API))
+        raise AgentIncompatible(
+            "This app and the Omelet service inside the virtual machine are "
+            "versions that cannot work together.\n"
+            f"service API {api}, app supports {supported}")
+    # /health skips the token check; /version is the cheapest route that does not.
     try:
-        found = client.version()
+        client.version()
     except AgentError as e:
         if e.code not in _TOKEN_CODES or reconnect is None:
             raise
         client = reconnect() or client
         try:
-            found = _version_once_serving(client, sleep, AGENT_RESTART_TIMEOUT)
+            _once_serving(client.version, sleep, AGENT_RESTART_TIMEOUT)
         except AgentError as again:
             if again.code not in _TOKEN_CODES:
                 raise
@@ -217,23 +192,9 @@ def agent_version_step(provider, *, client=None, expected: str | None = None,
                 "The Omelet service inside the virtual machine did not accept "
                 "this computer, and setting the virtual machine up again did "
                 f"not change that.\n{again.message}") from again
-        reconnected = True
-    if _is_current(found, want):
-        if reconnected:
-            return ("The Omelet service in the virtual machine was not "
-                    "accepting this computer, and has been reconnected.")
-        return None
-    # Not after a reconnect: that already re-provisioned the guest stack, and
-    # repeating it is minutes of pulling that cannot change the answer.
-    if repair is not None and not reconnected:
-        repair()
-        found = _version_once_serving(client, sleep, AGENT_RESTART_TIMEOUT)
-        if _is_current(found, want):
-            return ("The Omelet service in the virtual machine was out of "
-                    f"date and has been updated to {found}.")
-    raise AgentTooOld(
-        f"The virtual machine is running an older version of the Omelet "
-        f"service ({found}) than this app expects ({expected}).")
+        return ("The Omelet service in the virtual machine was not accepting "
+                "this computer, and has been reconnected.")
+    return None
 
 
 class VerificationFailed(RuntimeError):
@@ -355,13 +316,13 @@ _ACTIONS = {
                    "continues from where it stopped.",
     "create_vm": "The virtual machine could not be created. Restart the computer, "
                  "make sure there is at least 10 GB free, and run setup again.",
-    "bootstrap": "Docker could not be installed inside the virtual machine. The "
+    "bootstrap": "Omelet could not be installed inside the virtual machine. The "
                  "detail above comes from inside the VM. Run setup again; if it "
                  "fails the same way twice, send us that text.",
-    "agent": "The Omelet service inside the virtual machine could not be "
-             "brought up to date, or would not accept this computer — the "
-             "message above says which. Run setup again; if it fails the same "
-             "way twice, use Copy diagnostics and send us the text.",
+    "connect": "The Omelet service inside the virtual machine would not work "
+               "with this app, or would not accept this computer — the "
+               "message above says which. Run setup again; if it fails the "
+               "same way twice, use Copy diagnostics and send us the text.",
     "verify": "The test project did not answer. Run setup again; if it fails a "
               "second time, use Copy diagnostics and send us the text.",
 }
@@ -402,12 +363,10 @@ def default_steps(provider, *, cache_dir, template_dir: Path, domain,
         step("create_vm", lambda: None if provider.exists() else provider.create(),
              always_run=True),
         step("bootstrap", lambda: _bootstrap(provider), always_run=True),
-        # Before verify, not after: a host talking to an agent that predates
-        # the routes it uses should say so in one sentence, not fail several
-        # minutes into a compose run with a 404 on a route name.
-        step("agent", lambda: agent_version_step(
-            provider, repair=lambda: _bootstrap(provider, repair=True),
-            reconnect=lambda: _reconnect(provider)),
+        # Before verify: a mismatched or refusing agent is one sentence here,
+        # not a 404 or 401 minutes into the smoke test.
+        step("connect", lambda: connect_step(
+            provider, reconnect=lambda: _reconnect(provider)),
             always_run=True),
         step("verify", lambda: verify_step(provider, template_dir, domain),
              always_run=True),

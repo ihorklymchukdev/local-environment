@@ -30,19 +30,6 @@ def test_the_engine_entrypoint_constants_live_only_on_the_host():
         assert hasattr(host_constants, name), f"{name} must live in host/core/constants.py"
 
 
-def test_agent_image_matches_the_stack_files_default():
-    # Two places name the image: constants.AGENT_IMAGE (what the host expects to
-    # be talking to) and stack.yml's OMELET_AGENT_IMAGE default (what the guest
-    # actually pulls). Bumping one alone deploys an image the host never checks.
-    import re
-    from pathlib import Path
-
-    stack = Path(__file__).resolve().parent.parent / "host" / "provision" / "stack.yml"
-    match = re.search(r"\$\{OMELET_AGENT_IMAGE:-([^}]+)\}", stack.read_text())
-    assert match, "stack.yml must default OMELET_AGENT_IMAGE"
-    assert match[1] == host_constants.AGENT_IMAGE
-
-
 def test_the_readiness_window_is_the_same_on_both_sides_of_the_seam():
     # Declared twice for the same reason as the constants above: the agent may
     # not import from host/. Both wait out the same behaviour -- Traefik
@@ -54,20 +41,27 @@ def test_the_readiness_window_is_the_same_on_both_sides_of_the_seam():
     assert host_timeout == agent_timeout
 
 
-def test_the_agent_version_the_host_expects_is_the_one_the_image_reports():
-    # Three files name this version: the tag in constants.AGENT_IMAGE, the
-    # Dockerfile's AGENT_VERSION (which becomes GET /version's answer), and the
-    # agent package's own __version__. A bump that misses one makes the host's
-    # compatibility check report every VM as out of date.
+def test_the_stack_deploys_the_image_version_the_agent_reports():
+    # Three files name this version and are bumped together on an engine
+    # release: the stack's image tag (what the VM pulls), the Dockerfile's
+    # AGENT_VERSION (GET /version's answer) and the package __version__.
     import re
     from pathlib import Path
 
     from agent import __version__ as package_version
 
-    dockerfile = Path(__file__).resolve().parent.parent / "agent" / "Dockerfile"
-    match = re.search(r"^ARG AGENT_VERSION=(\S+)", dockerfile.read_text(), re.M)
-    assert match, "the Dockerfile must default AGENT_VERSION"
-    assert match[1] == host_constants.EXPECTED_AGENT_VERSION == package_version
+    root = Path(__file__).resolve().parent.parent
+    stack = re.search(r"\$\{OMELET_AGENT_IMAGE:-[^}]+:([^}:]+)\}",
+                      (root / "host" / "provision" / "stack.yml").read_text())
+    dockerfile = re.search(r"^ARG AGENT_VERSION=(\S+)",
+                           (root / "agent" / "Dockerfile").read_text(), re.M)
+    assert stack, "stack.yml must default OMELET_AGENT_IMAGE with a tag"
+    assert dockerfile, "the Dockerfile must default AGENT_VERSION"
+    assert stack[1] == dockerfile[1] == package_version
+
+
+def test_the_host_speaks_the_api_the_agent_serves():
+    assert agent_constants.API_VERSION in host_constants.SUPPORTED_API
 
 
 def test_the_guest_cli_holds_the_same_values_as_the_host_and_the_agent():
