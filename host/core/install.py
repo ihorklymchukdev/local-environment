@@ -168,7 +168,7 @@ def connect_step(provider, *, client=None, reconnect=None, sleep=time.sleep):
     from host.core import constants
 
     client = client or AgentClient.for_provider(provider)
-    # Agents from before the field serve exactly the api 1 routes.
+    # 0.1.0 agents predate the field and serve api 1.
     api = _once_serving(client.health, sleep, AGENT_RESTART_TIMEOUT).get("api", 1)
     if api not in constants.SUPPORTED_API:
         supported = ", ".join(str(n) for n in sorted(constants.SUPPORTED_API))

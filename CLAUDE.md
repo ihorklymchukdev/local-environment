@@ -29,6 +29,19 @@ host release; if it does, the logic is on the wrong side.
 
 ### Releasing the engine (manual until CI exists)
 
+Before the first shipped host can install anything:
+
+- The repository is public.
+- `engine/get.sh` exists on `main` — hosts fetch `ENGINE_URL` from `main`, not from a tag.
+- At least one `engine-vX.Y.Z` tag exists.
+- The ghcr image named by that tag's `engine/stack.yml` is published and public.
+- `agent/__init__.py`, the Dockerfile's `AGENT_VERSION` and `engine/stack.yml` are bumped together
+  before the first tag — the agent gained `/health`'s `api` field after 0.1.0.
+
+`engine/get.sh` on `main` is a live contract for every shipped host: keep its env vars
+(`OMELET_ENGINE_REPO`, `OMELET_ENGINE_REF`, `OMELET_ENGINE_REPAIR`), marker path and exit
+semantics backward compatible.
+
 1. Bump `agent/__init__.py`'s `__version__`, the Dockerfile's `AGENT_VERSION` and
    `engine/stack.yml`'s image tag together (`tests/test_constants_agree.py` holds them equal).
 2. `docker build -t ghcr.io/ihorklymchukdev/omelet-agent:X.Y.Z agent/ && docker push ghcr.io/ihorklymchukdev/omelet-agent:X.Y.Z`
@@ -42,7 +55,7 @@ calls changes incompatibly — that one needs a host release.
 ```bash
 pip install -e ".[dev]"
 
-python3 -m pytest -q                                    # full suite (430 tests, ~7s)
+python3 -m pytest -q                                    # full suite (434 tests, ~7s)
 python3 -m pytest tests/agent/test_project.py -q        # one file
 python3 -m pytest -k classify -q                        # one test by name
 ```
@@ -213,9 +226,11 @@ Do not add an `if windows` anywhere else — push the difference into a provider
 
 ## Testing conventions
 
-- No test ever spawns a real subprocess or touches a real VM. Provider tests inject a `FakeRunner`
-  that records `argv` and returns scripted bytes; CLI tests monkeypatch `cli._provider_factory` with
-  a `FakeProvider`. Assertions are about **constructed argv and decoded output**, not side effects.
+- No test spawns `wsl.exe`/`limactl`, touches a real VM, or reaches the network. Provider tests
+  inject a `FakeRunner` that records `argv` and returns scripted bytes; CLI tests monkeypatch
+  `cli._provider_factory` with a `FakeProvider`. Assertions are about **constructed argv and decoded
+  output**, not side effects. Engine shell scripts are the exception that still runs a real process:
+  they are exercised with `bash` against fakes on `PATH` (see the engine-scripts bullet below).
 - `tests/agent/test_acceptance_detection.py` runs the five real-world compose shapes in
   `tests/fixtures/compose/` through `detect_web` — add a fixture there when changing detection rules.
 - Engine scripts are tested under `tests/engine/`: `bash -n` plus text assertions over
