@@ -124,7 +124,12 @@ node_ok() {
   [[ "$(printf '%s\n' "$NODE_MIN" "$have" | sort -V | head -n 1)" == "$NODE_MIN" ]]
 }
 if ! node_ok; then
-  command -v gpg >/dev/null 2>&1 || { apt-get update; apt-get install -y gnupg; }
+  if ! command -v gpg >/dev/null 2>&1; then
+    if ! { apt-get update && apt-get install -y gnupg; }; then
+      echo "could not install gnupg: the Ubuntu package mirrors may be unreachable" >&2
+      exit 1
+    fi
+  fi
   install -m 0755 -d /etc/apt/keyrings
   if ! curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
       | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg; then
@@ -133,8 +138,10 @@ if ! node_ok; then
   fi
   echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
     > /etc/apt/sources.list.d/nodesource.list
-  apt-get update
-  apt-get install -y nodejs
+  if ! { apt-get update && apt-get install -y nodejs; }; then
+    echo "could not reach NodeSource to install Node.js 22" >&2
+    exit 1
+  fi
   node_ok || { echo "Node.js $NODE_MIN or newer did not install" >&2; exit 1; }
 fi
 
