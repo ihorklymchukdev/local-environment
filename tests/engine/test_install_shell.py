@@ -10,9 +10,8 @@ from host.core import constants
 # import-boundary tests.
 ROOT = Path(__file__).resolve().parents[2]
 BOOTSTRAP = ROOT / "engine" / "install.sh"
-# install.sh still writes the legacy marker; these literals stand in for host
-# constants that no longer exist.
-MARKER = f"{constants.GUEST_ROOT}/.bootstrapped"
+# install.sh still writes this path directly; it stands in for a host
+# constant that no longer exists.
 STACK = f"{constants.GUEST_ROOT}/stack.yml"
 
 
@@ -28,11 +27,10 @@ def test_bootstrap_pins_docker_official_repo_not_docker_io():
     assert "docker.io" not in text
 
 
-def test_bootstrap_writes_the_marker_path_the_host_reads_back():
-    # bootstrap.py polls MARKER after the script returns. Two independent
-    # literals here would let the script write a marker the host never finds,
-    # reported as "succeeded but left no version marker".
-    assert MARKER in BOOTSTRAP.read_text()
+def test_install_writes_the_marker_path_the_host_checks():
+    # The host treats a missing marker after a zero exit as a failed install;
+    # two spellings would fail every install that actually worked.
+    assert f"> {constants.ENGINE_MARKER}" in BOOTSTRAP.read_text()
 
 
 def test_bootstrap_guards_on_the_package_not_the_docker_binary():
@@ -105,13 +103,42 @@ def test_bootstrap_makes_opt_omelet_writable_before_the_agent_starts():
     assert _index_of("mkdir -p " + constants.GUEST_PROJECTS) < _index_of("chgrp")
 
 
-def test_bootstrap_writes_the_marker_last():
-    # bootstrap.py treats a missing marker as failure, which only works while the
-    # marker is the final step: written earlier, a failed pull looks bootstrapped.
+def test_install_writes_the_marker_last():
     commands = _commands()
-    marker = _index_of(f"> {MARKER}")
-    assert marker > _index_of(" up -d")
+    marker = _index_of(f"> {constants.ENGINE_MARKER}")
+    assert marker > _index_of('"$SKILLS_CLI" add')
     assert marker >= len(commands) - 2, "nothing that can fail may run after the marker"
+
+
+def test_install_has_no_early_exit_of_its_own():
+    # get.sh decides whether to install; the old marker's early `exit 0` left
+    # here would turn every repair into a silent no-op.
+    assert "exit 0" not in _commands()
+
+
+def test_skills_come_from_the_unpacked_engine_through_a_pinned_cli():
+    assert re.search(r"^SKILLS_CLI=skills@\d+\.\d+\.\d+$", BOOTSTRAP.read_text(), re.M), \
+        "an unpinned skills CLI changes the install without a release"
+    (add,) = [l for l in _commands() if '"$SKILLS_CLI" add' in l]
+    assert '"$ENGINE_DIR/skills"' in add
+    assert "github.com" not in add, "skills install from the same ref get.sh unpacked"
+
+
+def test_npx_in_the_account_loop_cannot_swallow_the_account_list():
+    # The loop reads accounts from stdin; a command inside it that reads stdin
+    # consumes the remaining accounts, and only the first user gets skills.
+    runuser = [l for l in _commands() if "runuser" in l]
+    assert runuser, "skills are installed per account"
+    assert all("</dev/null" in l for l in runuser)
+
+
+def test_a_repair_or_a_new_token_recreates_the_agent():
+    # The agent reads its token once at startup; `up -d` leaves it running.
+    commands = _commands()
+    recreate = _index_of("--force-recreate agent")
+    assert recreate > _index_of(" up -d")
+    condition = commands[recreate - 1]
+    assert "TOKEN_CREATED" in condition and "REPAIR" in condition, condition
 
 
 def test_bootstrap_generates_the_token_only_if_absent():
