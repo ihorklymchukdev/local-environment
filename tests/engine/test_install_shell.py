@@ -9,20 +9,20 @@ from host.core import constants
 # elsewhere. Same rule as tests/test_no_platform_leak.py and the two
 # import-boundary tests.
 ROOT = Path(__file__).resolve().parents[2]
-BOOTSTRAP = ROOT / "engine" / "install.sh"
+INSTALL = ROOT / "engine" / "install.sh"
 # install.sh still writes this path directly; it stands in for a host
 # constant that no longer exists.
 STACK = f"{constants.GUEST_ROOT}/stack.yml"
 
 
-def test_bootstrap_is_valid_bash():
+def test_install_is_valid_bash():
     # `bash -n` parses without executing; catches syntax errors.
-    result = subprocess.run(["bash", "-n", str(BOOTSTRAP)], capture_output=True, text=True)
+    result = subprocess.run(["bash", "-n", str(INSTALL)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 
 
-def test_bootstrap_pins_docker_official_repo_not_docker_io():
-    text = BOOTSTRAP.read_text()
+def test_install_pins_docker_official_repo_not_docker_io():
+    text = INSTALL.read_text()
     assert "download.docker.com" in text
     assert "docker.io" not in text
 
@@ -30,14 +30,14 @@ def test_bootstrap_pins_docker_official_repo_not_docker_io():
 def test_install_writes_the_marker_path_the_host_checks():
     # The host treats a missing marker after a zero exit as a failed install;
     # two spellings would fail every install that actually worked.
-    assert f"> {constants.ENGINE_MARKER}" in BOOTSTRAP.read_text()
+    assert f"> {constants.ENGINE_MARKER}" in INSTALL.read_text()
 
 
-def test_bootstrap_guards_on_the_package_not_the_docker_binary():
+def test_install_guards_on_the_package_not_the_docker_binary():
     # Docker Desktop's WSL integration puts its own docker CLI on PATH. Guarding
     # on `command -v docker` skipped the install and then failed at
     # `systemctl enable` with "Unit file docker.service does not exist".
-    code = [l for l in BOOTSTRAP.read_text().splitlines()
+    code = [l for l in INSTALL.read_text().splitlines()
             if not l.lstrip().startswith("#")]
     assert any("dpkg -s docker-ce" in l for l in code)
     assert not any("command -v docker" in l for l in code)
@@ -49,7 +49,7 @@ def test_bootstrap_guards_on_the_package_not_the_docker_binary():
 _BARE_DOCKER = re.compile(r"(?:^|[|&;(!]|\b(?:then|else|do)\s)\s*docker\b")
 
 
-def test_bootstrap_invokes_docker_by_absolute_path():
+def test_install_invokes_docker_by_absolute_path():
     # A bare `docker` would reach Docker Desktop's CLI when its WSL integration
     # is on, sending this VM's containers to Desktop's engine instead.
     for line in _commands():
@@ -59,7 +59,7 @@ def test_bootstrap_invokes_docker_by_absolute_path():
 def _commands() -> list[str]:
     """Executable lines only -- a comment mentioning `docker run traefik` must
     not satisfy or trip the assertions below."""
-    return [l.strip() for l in BOOTSTRAP.read_text().splitlines()
+    return [l.strip() for l in INSTALL.read_text().splitlines()
             if l.strip() and not l.lstrip().startswith("#")]
 
 
@@ -67,10 +67,10 @@ def _index_of(needle: str) -> int:
     for i, line in enumerate(_commands()):
         if needle in line:
             return i
-    raise AssertionError(f"bootstrap.sh has no line containing {needle!r}")
+    raise AssertionError(f"install.sh has no line containing {needle!r}")
 
 
-def test_bootstrap_brings_the_stack_up_with_compose_not_an_inline_container():
+def test_install_brings_the_stack_up_with_compose_not_an_inline_container():
     # Traefik and the agent are one compose stack now; an inline `docker run`
     # would start a Traefik outside it that compose can never upgrade or stop.
     commands = _commands()
@@ -81,13 +81,13 @@ def test_bootstrap_brings_the_stack_up_with_compose_not_an_inline_container():
     assert not any("traefik.yml" in l for l in commands)
 
 
-def test_bootstrap_always_pulls_before_bringing_the_stack_up():
+def test_install_always_pulls_before_bringing_the_stack_up():
     # Always pulling is the delivery decision: it is how an agent update reaches
     # an already-bootstrapped VM. `up -d` alone would keep running a stale image.
     assert _index_of(f"compose -f {STACK} pull") < _index_of(" up -d")
 
 
-def test_bootstrap_makes_opt_omelet_writable_before_the_agent_starts():
+def test_install_makes_opt_omelet_writable_before_the_agent_starts():
     # The agent runs as a non-root user whose only shared credential with the VM
     # is the docker group. Root-owned 0755 here means it cannot create
     # /opt/omelet/state.db, and `restart: always` then loops it forever.
@@ -110,6 +110,16 @@ def test_install_writes_the_marker_last():
     assert marker >= len(commands) - 2, "nothing that can fail may run after the marker"
 
 
+def test_a_failed_reinstall_does_not_leave_the_previous_marker_standing():
+    # The engine dir, stack and skills are already replaced by the time any
+    # Docker step could fail; the old marker must not go on claiming success.
+    commands = _commands()
+    rm_marker = _index_of(f"rm -f {constants.ENGINE_MARKER}")
+    assert rm_marker < _index_of("dpkg -s docker-ce")
+    write_marker = _index_of(f"> {constants.ENGINE_MARKER}")
+    assert write_marker >= len(commands) - 2, "nothing that can fail may run after the marker"
+
+
 def test_install_has_no_early_exit_of_its_own():
     # get.sh decides whether to install; the old marker's early `exit 0` left
     # here would turn every repair into a silent no-op.
@@ -117,7 +127,7 @@ def test_install_has_no_early_exit_of_its_own():
 
 
 def test_skills_come_from_the_unpacked_engine_through_a_pinned_cli():
-    assert re.search(r"^SKILLS_CLI=skills@\d+\.\d+\.\d+$", BOOTSTRAP.read_text(), re.M), \
+    assert re.search(r"^SKILLS_CLI=skills@\d+\.\d+\.\d+$", INSTALL.read_text(), re.M), \
         "an unpinned skills CLI changes the install without a release"
     (add,) = [l for l in _commands() if '"$SKILLS_CLI" add' in l]
     assert '"$ENGINE_DIR/skills"' in add
@@ -141,31 +151,31 @@ def test_a_repair_or_a_new_token_recreates_the_agent():
     assert "TOKEN_CREATED" in condition and "REPAIR" in condition, condition
 
 
-def test_bootstrap_generates_the_token_only_if_absent():
+def test_install_generates_the_token_only_if_absent():
     # Bootstrap re-runs are normal (idempotency by design); regenerating the
     # token on every run would invalidate a credential the host is already
     # holding.
-    assert "[[ ! -s " + constants.GUEST_TOKEN + " ]]" in BOOTSTRAP.read_text()
+    assert "[[ ! -s " + constants.GUEST_TOKEN + " ]]" in INSTALL.read_text()
 
 
-def test_bootstrap_generates_the_token_without_a_sigpipe_trap():
+def test_install_generates_the_token_without_a_sigpipe_trap():
     # tr fed straight from /dev/urandom never terminates on its own; bounding
     # its output with a downstream `head -c` kills it with SIGPIPE the moment
     # head stops reading, and `set -o pipefail` then fails the whole script
     # for a byte count that was never wrong. Bounding /dev/urandom itself at
     # the head of the pipeline avoids the trap entirely.
-    text = BOOTSTRAP.read_text()
+    text = INSTALL.read_text()
     assert "head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \\n'" in text
     assert "tr -dc" not in text
 
 
-def test_bootstrap_writes_the_token_before_the_stack_comes_up():
+def test_install_writes_the_token_before_the_stack_comes_up():
     commands = _commands()
     token_write = _index_of(constants.GUEST_TOKEN)
     assert token_write < _index_of(" up -d")
 
 
-def test_bootstrap_writes_the_token_after_the_permissions_sweep_widens_it():
+def test_install_writes_the_token_after_the_permissions_sweep_widens_it():
     # A mode-600 token written before `chmod -R g+rwX /opt/omelet` comes out
     # group-readable; written after, its own chmod is the last word.
     commands = _commands()
@@ -173,14 +183,14 @@ def test_bootstrap_writes_the_token_after_the_permissions_sweep_widens_it():
     assert _index_of("g+rwX") < token_write
 
 
-def test_bootstrap_reasserts_a_narrow_mode_on_the_token_after_writing_it():
+def test_install_reasserts_a_narrow_mode_on_the_token_after_writing_it():
     commands = _commands()
     chmod = _index_of(f"chmod 640 {constants.GUEST_TOKEN}")
     assert chmod > _index_of(f"[[ ! -s {constants.GUEST_TOKEN} ]]")
     assert chmod < _index_of(" up -d")
 
 
-def test_bootstrap_creates_the_token_at_a_narrow_mode_from_the_start():
+def test_install_creates_the_token_at_a_narrow_mode_from_the_start():
     # A plain `>` redirect creates the file under root's umask (644) before
     # any later chmod narrows it, leaving a window where it is
     # world-readable. `install -m` sets the mode at creation instead.
@@ -190,7 +200,7 @@ def test_bootstrap_creates_the_token_at_a_narrow_mode_from_the_start():
     assert create < _index_of(f"head -c 32 /dev/urandom")
 
 
-def test_bootstrap_chgrps_the_token_to_docker():
+def test_install_chgrps_the_token_to_docker():
     # The other half of the 640/docker permission model: without this, the
     # token's group stays whatever `install`/root's process defaults to,
     # which the agent's own group membership may not be.
@@ -200,7 +210,7 @@ def test_bootstrap_chgrps_the_token_to_docker():
     assert chgrp < _index_of(f"chmod 640 {constants.GUEST_TOKEN}")
 
 
-def test_bootstrap_writes_this_vms_real_docker_gid_for_the_stack():
+def test_install_writes_this_vms_real_docker_gid_for_the_stack():
     # stack.yml's group_add defaults to 999 and the image bakes in 999, but the
     # chgrp above uses whatever GID this VM's docker group actually has. On a VM
     # where they differ the agent can write neither /opt/omelet nor the socket

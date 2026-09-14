@@ -15,6 +15,9 @@ SKILLS_CLI=skills@1.5.26
 NODE_MIN=22.20.0
 TOKEN_CREATED=0
 
+# A failed reinstall must not look installed; get.sh already resolved the ref.
+rm -f /opt/omelet/engine.version
+
 export DEBIAN_FRONTEND=noninteractive
 
 # 1. docker-ce from the official repo.
@@ -22,18 +25,25 @@ export DEBIAN_FRONTEND=noninteractive
 # integration puts its own docker CLI on PATH, which made this skip the install
 # and then fail at `systemctl enable` with no docker.service.
 if ! dpkg -s docker-ce >/dev/null 2>&1; then
-  apt-get update
-  apt-get install -y ca-certificates curl
+  if ! { apt-get update && apt-get install -y ca-certificates curl; }; then
+    echo "could not install Docker: download.docker.com or the Ubuntu package mirrors may be unreachable" >&2
+    exit 1
+  fi
   install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-    -o /etc/apt/keyrings/docker.asc
+  if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+      -o /etc/apt/keyrings/docker.asc; then
+    echo "could not install Docker: download.docker.com or the Ubuntu package mirrors may be unreachable" >&2
+    exit 1
+  fi
   chmod a+r /etc/apt/keyrings/docker.asc
   . /etc/os-release
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
 https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
     > /etc/apt/sources.list.d/docker.list
-  apt-get update
-  apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  if ! { apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin; }; then
+    echo "could not install Docker: download.docker.com or the Ubuntu package mirrors may be unreachable" >&2
+    exit 1
+  fi
 fi
 
 # Absolute path throughout: if Docker Desktop's CLI is on PATH it would
@@ -114,8 +124,10 @@ fi
 
 # 8. git for `omelet clone`, Node for `npx skills`.
 if ! dpkg -s git >/dev/null 2>&1; then
-  apt-get update
-  apt-get install -y git
+  if ! { apt-get update && apt-get install -y git; }; then
+    echo "could not install git: the Ubuntu package mirrors may be unreachable" >&2
+    exit 1
+  fi
 fi
 node_ok() {
   command -v node >/dev/null 2>&1 || return 1
@@ -154,6 +166,12 @@ install -m 644 "$ENGINE_DIR/instructions/omelet.md" /etc/claude-code/CLAUDE.md
 rm -rf /etc/codex/skills/omelet-setup /opt/omelet/bin /opt/omelet/agents \
   /opt/omelet/.bootstrapped \
   /etc/skel/.claude/skills/omelet-setup /etc/skel/.agents/skills/omelet-setup
+if [[ -f /etc/skel/.codex/AGENTS.md ]]; then
+  sed -i '\|^<!-- omelet:begin -->$|,\|^<!-- omelet:end -->$|d' /etc/skel/.codex/AGENTS.md
+fi
+if [[ -L /etc/skel/projects && "$(readlink /etc/skel/projects)" == /opt/omelet/projects ]]; then
+  rm -f /etc/skel/projects
+fi
 
 # 11. per account: docker group, Codex block, ~/projects, skills.
 accounts() {
@@ -165,13 +183,6 @@ while IFS=: read -r name uid gid home; do
     usermod -aG docker "$name"
   fi
   bash "$ENGINE_DIR/lib/install-agents.sh" "$ENGINE_DIR" "$home" "$uid:$gid"
-  # npx symlinks ~/.claude/skills/<name>; a real directory left there by the
-  # old copy-based install would block it.
-  for old in "$home/.claude/skills/omelet-setup" "$home/.agents/skills/omelet-setup"; do
-    if [[ -d "$old" && ! -L "$old" ]]; then
-      rm -rf "$old"
-    fi
-  done
   # stdin is the account list this loop is reading.
   if ! runuser -u "$name" -- env HOME="$home" DISABLE_TELEMETRY=1 npx -y "$SKILLS_CLI" add "$ENGINE_DIR/skills" -s '*' -g -a claude-code codex -y </dev/null; then
     echo "could not install Omelet's skills for $name: the npm registry may be unreachable" >&2
