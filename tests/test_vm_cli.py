@@ -18,10 +18,9 @@ class FakeProvider:
     def destroy(self): pass
     def exec(self, argv, *, root=False):
         self.execs.append(argv)
-        # make the marker read report "already current" so bootstrap is a no-op
-        from host.core import constants
-        if "cat" in argv:
-            return Completed(0, str(constants.BOOTSTRAP_VERSION), "")
+        # the engine marker exists, so bootstrap is a no-op
+        if argv[:2] == ["test", "-s"]:
+            return Completed(0, "", "")
         return Completed(0, "", "")
     def forward(self, g, h): pass
     def is_supported(self): ...
@@ -40,8 +39,8 @@ def test_vm_create_fails_loudly_when_guest_bootstrap_fails(monkeypatch):
     class FailingProvider(FakeProvider):
         def exec(self, argv, *, root=False):
             self.execs.append(argv)
-            if "cat" in argv:
-                return Completed(1, "", "")          # no marker yet
+            if argv[:2] == ["test", "-s"]:
+                return Completed(1, "", "")          # not installed yet
             return Completed(1, "", "E: Unable to locate package docker-ce")
 
     monkeypatch.setattr(cli, "_provider_factory", lambda: FailingProvider(exists=True))

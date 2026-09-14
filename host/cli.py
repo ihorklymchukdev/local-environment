@@ -79,16 +79,16 @@ app.add_typer(vm, name="vm")
 
 @vm.command("create")
 def vm_create():
-    """Create the VM and bootstrap Docker + Traefik inside it."""
+    """Create the VM and install Omelet inside it."""
     from host.core.bootstrap import bootstrap, BootstrapError
     with _vm_errors():
         p = _provider()
         if p.exists():
-            typer.echo("VM already exists; bootstrapping (idempotent).")
+            typer.echo("VM already exists; checking the Omelet install.")
         else:
             typer.echo("Creating VM…")
             p.create()
-        typer.echo("Installing Docker + Traefik in the VM (a few minutes)…")
+        typer.echo("Installing Omelet in the VM (a few minutes)…")
         try:
             bootstrap(p)
         except BootstrapError as e:
@@ -354,20 +354,12 @@ def selfcheck():
     is caught by running the exe, not discovered by a user mid-setup.
     """
     from pathlib import Path
-    from host.core import bootstrap as _bootstrap
-    from host.core.bootstrap import guest_assets
     from host.core.install import VERIFY_TEMPLATE
     import host.providers as _providers
 
-    # Root resolved from bootstrap.py, not from this file: cli.py is the frozen
-    # entry script, and PyInstaller gives it a __file__ under the bundle root
-    # rather than under host/.
-    # Derived from the push list rather than restated, so an asset can never be
-    # added or dropped without this check following it -- that gap is how a
-    # deleted traefik.yml stayed in the bundle with nothing failing.
-    checks = [(local.relative_to(_bootstrap._ROOT).as_posix(), local)
-              for local, _remote in guest_assets()]
-    checks += [
+    # Resolved from the modules that read them, not from this file: cli.py is
+    # the frozen entry script, whose __file__ sits at the bundle root.
+    checks = [
         ("host/provision/nginx-hello/docker-compose.yml",
          VERIFY_TEMPLATE / "docker-compose.yml"),
         ("host/providers/omelet.yaml", Path(_providers.__file__).parent / "omelet.yaml"),

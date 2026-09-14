@@ -156,7 +156,7 @@ def test_uninstall_purge_succeeds_and_clears_state(monkeypatch):
 def test_selfcheck_reports_ok_for_every_bundled_asset():
     result = runner.invoke(cli.app, ["selfcheck"])
     assert result.exit_code == 0
-    for name in ("bootstrap.sh", "stack.yml", "docker-compose.yml", "omelet.yaml"):
+    for name in ("docker-compose.yml", "omelet.yaml"):
         assert name in result.stdout
     assert "MISSING" not in result.stdout
 

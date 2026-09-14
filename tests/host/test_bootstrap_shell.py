@@ -10,6 +10,10 @@ from host.core import constants
 # import-boundary tests.
 ROOT = Path(__file__).resolve().parents[2]
 BOOTSTRAP = ROOT / "host" / "provision" / "bootstrap.sh"
+# The script still writes the old marker/stack path until Task 5 moves it into
+# engine/install.sh; these are this file's own literals, not host constants.
+MARKER = f"{constants.GUEST_ROOT}/.bootstrapped"
+STACK = f"{constants.GUEST_ROOT}/stack.yml"
 
 
 def test_bootstrap_is_valid_bash():
@@ -25,10 +29,10 @@ def test_bootstrap_pins_docker_official_repo_not_docker_io():
 
 
 def test_bootstrap_writes_the_marker_path_the_host_reads_back():
-    # bootstrap.py polls constants.BOOTSTRAP_MARKER after the script returns.
-    # Two independent literals here would let the script write a marker the
-    # host never finds, reported as "succeeded but left no version marker".
-    assert constants.BOOTSTRAP_MARKER in BOOTSTRAP.read_text()
+    # bootstrap.py polls MARKER after the script returns. Two independent
+    # literals here would let the script write a marker the host never finds,
+    # reported as "succeeded but left no version marker".
+    assert MARKER in BOOTSTRAP.read_text()
 
 
 def test_bootstrap_guards_on_the_package_not_the_docker_binary():
@@ -84,7 +88,7 @@ def test_bootstrap_brings_the_stack_up_with_compose_not_an_inline_container():
     # Traefik and the agent are one compose stack now; an inline `docker run`
     # would start a Traefik outside it that compose can never upgrade or stop.
     commands = _commands()
-    assert any(f"compose -f {constants.GUEST_STACK}" in l and " up -d" in l
+    assert any(f"compose -f {STACK}" in l and " up -d" in l
                for l in commands)
     assert not any("docker run" in l for l in commands), "the inline traefik container is gone"
     assert not any("docker rm -f traefik" in l for l in commands)
@@ -94,7 +98,7 @@ def test_bootstrap_brings_the_stack_up_with_compose_not_an_inline_container():
 def test_bootstrap_always_pulls_before_bringing_the_stack_up():
     # Always pulling is the delivery decision: it is how an agent update reaches
     # an already-bootstrapped VM. `up -d` alone would keep running a stale image.
-    assert _index_of(f"compose -f {constants.GUEST_STACK} pull") < _index_of(" up -d")
+    assert _index_of(f"compose -f {STACK} pull") < _index_of(" up -d")
 
 
 def test_bootstrap_makes_opt_omelet_writable_before_the_agent_starts():
@@ -117,7 +121,7 @@ def test_bootstrap_writes_the_marker_last():
     # bootstrap.py treats a missing marker as failure, which only works while the
     # marker is the final step: written earlier, a failed pull looks bootstrapped.
     commands = _commands()
-    marker = _index_of(f"> {constants.BOOTSTRAP_MARKER}")
+    marker = _index_of(f"> {MARKER}")
     assert marker > _index_of(" up -d")
     assert marker >= len(commands) - 2, "nothing that can fail may run after the marker"
 
@@ -194,17 +198,3 @@ def test_bootstrap_writes_this_vms_real_docker_gid_for_the_stack():
         "the GID must be read from the VM, not assumed"
     assert not any(re.search(r"OMELET_DOCKER_GID=[0-9]", l) for l in commands), \
         "a literal GID is the bug this guards against"
-
-
-def test_bootstrap_installs_the_agent_files_where_the_host_pushes_them():
-    # The host pushes to guest_assets()'s paths and the script reads them by
-    # literal path; two independent spellings install nothing, silently.
-    import posixpath
-    from host.core.bootstrap import guest_assets
-
-    remotes = {local.name: remote for local, remote in guest_assets()}
-    text = "\n".join(_commands())
-    assert remotes["omelet.py"] in text
-    assert remotes["install-agents.sh"] in text
-    assert remotes["login-users.sh"] in text
-    assert posixpath.dirname(remotes["omelet.md"]) in text

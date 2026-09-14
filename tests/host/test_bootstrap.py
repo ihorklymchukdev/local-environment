@@ -1,171 +1,153 @@
+import base64
+import os
+import re
+import subprocess
+
 import pytest
 
-from host.core.bootstrap import bootstrap, read_marker, BootstrapError
-from host.core.provider import Completed
 from host.core import constants
+from host.core.bootstrap import BootstrapError, bootstrap
+from host.core.provider import Completed
 
 
 class FakeProvider:
-    """Guest stand-in: a successful bootstrap.sh run writes the marker, as the
-    real script does on its last line."""
+    """Guest stand-in. A successful installer run writes the marker, as
+    engine/install.sh does on its last line."""
 
-    def __init__(self, marker_value="", fail_on=None, stderr="", writes_marker=True):
+    def __init__(self, *, installed=False, fail=False, stderr="", writes_marker=True):
         self.execs = []
-        self._marker = marker_value
-        self._fail_on = fail_on
+        self.installed = installed
+        self._fail = fail
         self._stderr = stderr
         self._writes_marker = writes_marker
 
     def exec(self, argv, *, root=False):
         self.execs.append((argv, root))
-        joined = " ".join(argv)
-        if "cat" in argv and constants.BOOTSTRAP_MARKER in joined:
-            return Completed(0 if self._marker else 1, self._marker, "")
-        if self._fail_on and self._fail_on in joined:
+        if argv[:2] == ["test", "-s"]:
+            return Completed(0 if self.installed else 1, "", "")
+        if self._fail:
             return Completed(1, "", self._stderr)
-        if "bootstrap.sh" in joined and self._writes_marker:
-            self._marker = str(constants.BOOTSTRAP_VERSION)
+        if self._writes_marker:
+            self.installed = True
         return Completed(0, "", "")
 
-
-def test_read_marker_returns_int_when_present():
-    assert read_marker(FakeProvider(marker_value="1")) == 1
-
-
-def test_read_marker_none_when_absent():
-    assert read_marker(FakeProvider(marker_value="")) is None
+    def installer_runs(self):
+        return [(argv, root) for argv, root in self.execs if argv[:2] != ["test", "-s"]]
 
 
-def test_bootstrap_skips_when_marker_current():
-    p = FakeProvider(marker_value=str(constants.BOOTSTRAP_VERSION))
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch):
+    for name in ("OMELET_ENGINE_URL", "OMELET_ENGINE_REF"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def _command(provider) -> str:
+    (run,) = provider.installer_runs()
+    argv, _root = run
+    assert argv[:2] == ["bash", "-lc"]
+    return argv[2]
+
+
+def _stub(command: str) -> str:
+    return base64.b64decode(re.search(r"echo (\S+) \| base64 -d", command)[1]).decode()
+
+
+def test_an_installed_engine_is_left_alone():
+    p = FakeProvider(installed=True)
     bootstrap(p)
-    # only the marker read happened; the script was never run as root
-    assert all("bootstrap.sh" not in " ".join(a) for a, _ in p.execs)
+    assert p.installer_runs() == []
+    assert any(constants.ENGINE_MARKER in argv for argv, _ in p.execs)
 
 
-def test_every_asset_the_bootstrap_pushes_exists_on_disk():
-    # The push list is read at run time, not import time, so a file deleted from
-    # the repo surfaces as FileNotFoundError minutes into a user's install --
-    # which is precisely how a stale traefik.yml push shipped once.
-    from host.core.bootstrap import guest_assets
-    for local, _remote in guest_assets():
-        assert local.is_file(), f"bootstrap pushes a file that does not exist: {local}"
-
-
-def test_bootstrap_pushes_the_stack_file_the_guest_script_brings_up():
-    # bootstrap.sh runs `docker compose -f /opt/omelet/stack.yml up -d` and
-    # aborts if the file is absent, so the two paths have to agree.
-    p = FakeProvider(marker_value="")
+def test_a_missing_engine_runs_the_default_entrypoint_as_root():
+    p = FakeProvider()
     bootstrap(p)
-    pushes = [" ".join(a) for a, _ in p.execs if "base64 -d" in " ".join(a)]
-    assert any(w.rstrip().endswith(constants.GUEST_STACK) for w in pushes), \
-        f"nothing was pushed to {constants.GUEST_STACK}"
-    assert "services:" in _pushed_payload(p, constants.GUEST_STACK).decode()
+    (run,) = p.installer_runs()
+    assert run[1] is True, "the installer needs root"
+    assert _command(p).rstrip().endswith(constants.ENGINE_URL)
 
 
-def test_bootstrap_runs_script_as_root_when_absent():
-    p = FakeProvider(marker_value="")
+def test_the_entrypoint_can_be_pointed_elsewhere_from_the_environment(monkeypatch):
+    monkeypatch.setenv("OMELET_ENGINE_URL", "https://example.invalid/branch/get.sh")
+    p = FakeProvider()
     bootstrap(p)
-    ran = [a for a, root in p.execs if root and "bootstrap.sh" in " ".join(a)]
-    assert ran, "expected bootstrap.sh to run as root"
+    assert _command(p).rstrip().endswith("https://example.invalid/branch/get.sh")
+    assert constants.ENGINE_URL not in _command(p)
 
 
-def test_bootstrap_runs_when_force_true():
-    p = FakeProvider(marker_value=str(constants.BOOTSTRAP_VERSION))
-    bootstrap(p, force=True)
-    ran = [a for a, root in p.execs if root and "bootstrap.sh" in " ".join(a)]
-    assert ran, "expected bootstrap.sh to run as root when force=True"
+def test_a_ref_reaches_the_guest_only_when_one_is_set(monkeypatch):
+    p = FakeProvider()
+    bootstrap(p)
+    assert "OMELET_ENGINE_REF" not in _command(p)
+
+    monkeypatch.setenv("OMELET_ENGINE_REF", "feature/engine-work")
+    p = FakeProvider()
+    bootstrap(p)
+    assert "OMELET_ENGINE_REF=feature/engine-work" in _command(p)
 
 
-# The upload writes *to* /opt/omelet/bin/bootstrap.sh, so only the `bash <path>`
-# form (no -lc) identifies the script actually running.
-SCRIPT_RUN = "bash /opt/omelet/bin/bootstrap.sh"
+def test_repair_reinstalls_an_installed_engine_and_tells_the_installer_so():
+    plain = FakeProvider()
+    bootstrap(plain)
+    assert "OMELET_ENGINE_REPAIR" not in _command(plain)
+
+    p = FakeProvider(installed=True)
+    bootstrap(p, repair=True)
+    assert "OMELET_ENGINE_REPAIR=1" in _command(p)
 
 
-def test_bootstrap_raises_with_guest_stderr_when_script_fails():
-    p = FakeProvider(fail_on=SCRIPT_RUN,
-                     stderr="E: Unable to locate package docker-ce")
+def test_a_failing_installer_raises_with_the_guests_own_error():
+    p = FakeProvider(fail=True, stderr="E: Unable to locate package docker-ce")
     with pytest.raises(BootstrapError) as excinfo:
         bootstrap(p)
     assert "docker-ce" in str(excinfo.value)
 
 
-def test_bootstrap_raises_when_push_fails_and_skips_the_script():
-    p = FakeProvider(fail_on="base64 -d")
-    with pytest.raises(BootstrapError):
+def test_an_installer_that_exits_zero_without_the_marker_is_a_failure():
+    with pytest.raises(BootstrapError, match="engine.version"):
+        bootstrap(FakeProvider(writes_marker=False))
+
+
+def test_a_value_that_would_be_re_split_on_the_guest_command_line_is_refused(monkeypatch):
+    # The command crosses wsl.exe or ssh as one argument; a space or quote in
+    # it would be parsed as shell by the guest.
+    monkeypatch.setenv("OMELET_ENGINE_REF", "main; rm -rf /")
+    p = FakeProvider()
+    with pytest.raises(BootstrapError, match="OMELET_ENGINE_REF"):
         bootstrap(p)
-    assert all(not " ".join(a).startswith(SCRIPT_RUN) for a, _ in p.execs), \
-        "the script must not run when its own upload failed"
+    assert p.installer_runs() == []
 
 
-def test_bootstrap_raises_when_script_exits_zero_without_writing_marker():
-    p = FakeProvider(writes_marker=False)
-    with pytest.raises(BootstrapError, match="marker"):
-        bootstrap(p)
+def _fake_curl(tmp_path, body: str):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    curl = bin_dir / "curl"
+    curl.write_text("#!/bin/sh\n" + body)
+    curl.chmod(0o755)
+    return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
 
 
-def _pushed_payload(provider, filename):
-    """Decode what _push_file actually sent to the guest for `filename`."""
-    import base64 as _b64
-    for argv, _root in provider.execs:
-        joined = " ".join(argv)
-        if "base64 -d" in joined and joined.rstrip().endswith(filename):
-            blob = joined.split("echo ", 1)[1].split(" |", 1)[0]
-            return _b64.b64decode(blob)
-    raise AssertionError(f"no push recorded for {filename}")
-
-
-def test_push_file_strips_crlf_so_bash_can_read_the_script(tmp_path, monkeypatch):
-    # A Windows checkout (core.autocrlf) turns bootstrap.sh into CRLF. Bash then
-    # reads line 2 as `set -euo pipefail\r` and aborts with "invalid option
-    # name" -- which is exactly how the first real Windows build failed.
-    import shutil
-    import host.core.bootstrap as bs
-
-    crlf_assets = tmp_path / "guest"
-    shutil.copytree(bs._ASSETS, crlf_assets)
-    (crlf_assets / "bootstrap.sh").write_bytes(b"#!/usr/bin/env bash\r\nset -euo pipefail\r\n")
-    (crlf_assets / "stack.yml").write_bytes(b"services:\r\n  agent:\r\n")
-    monkeypatch.setattr(bs, "_ASSETS", crlf_assets)
-
-    p = FakeProvider(marker_value="")
+def _run_stub(tmp_path, env):
+    p = FakeProvider()
     bootstrap(p)
-
-    script = _pushed_payload(p, "/opt/omelet/bin/bootstrap.sh")
-    assert b"\r" not in script, "CRLF reached the Linux guest"
-    assert script.splitlines()[1] == b"set -euo pipefail"
-    assert b"\r" not in _pushed_payload(p, constants.GUEST_STACK)
-
-
-def test_restarting_the_agent_forces_a_recreate_rather_than_a_no_op_up():
-    # The agent reads its token once at startup and `up -d` leaves an unchanged
-    # service alone, so without --force-recreate the "reconnect" repair cannot
-    # fix the agent that is refusing every call.
-    from host.core.bootstrap import restart_agent
-
-    p = FakeProvider(marker_value=str(constants.BOOTSTRAP_VERSION))
-    restart_agent(p)
-    joined = [" ".join(a) for a, root in p.execs if root]
-    assert any("--force-recreate" in c and c.rstrip().endswith("agent")
-               and constants.GUEST_STACK in c for c in joined), joined
+    stub = tmp_path / "stub.sh"
+    stub.write_text(_stub(_command(p)))
+    return subprocess.run(["bash", str(stub), "https://example.invalid/get.sh"],
+                          env=env, capture_output=True, text=True)
 
 
-def test_a_failed_agent_restart_is_reported_with_the_guests_own_error():
-    from host.core.bootstrap import restart_agent
-
-    p = FakeProvider(marker_value=str(constants.BOOTSTRAP_VERSION),
-                     fail_on="force-recreate", stderr="no such service: agent")
-    with pytest.raises(BootstrapError) as excinfo:
-        restart_agent(p)
-    assert "no such service: agent" in str(excinfo.value)
+def test_the_stub_runs_the_script_it_downloaded(tmp_path):
+    env = _fake_curl(tmp_path, "echo 'echo engine-ran'\n")
+    result = _run_stub(tmp_path, env)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "engine-ran"
 
 
-def test_every_pushed_asset_fits_one_guest_command_line():
-    # _push_file sends each asset base64-encoded inside one `wsl.exe -- bash -lc`
-    # argument, and Windows caps the whole command line at 32,767 characters.
-    import base64
-    from host.core.bootstrap import guest_assets
-    for local, remote in guest_assets():
-        encoded = base64.b64encode(local.read_bytes().replace(b"\r\n", b"\n"))
-        assert len(encoded) + 2 * len(remote) + 200 < 32_767, (
-            f"{local.name} is too big to push into the VM in one command")
+def test_a_broken_download_runs_nothing_and_says_so(tmp_path):
+    # Piping curl straight into bash would execute whatever arrived before the
+    # connection dropped.
+    env = _fake_curl(tmp_path, "echo 'echo half-a-script'\nexit 22\n")
+    result = _run_stub(tmp_path, env)
+    assert result.returncode != 0
+    assert "could not download" in result.stderr
+    assert "half-a-script" not in result.stdout

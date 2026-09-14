@@ -22,10 +22,10 @@ def test_names_declared_in_both_constants_modules_hold_the_same_value():
     assert not diverged, f"host/agent constants diverged (host, agent): {diverged}"
 
 
-def test_bootstrap_constants_live_only_on_the_host():
-    # Bootstrap is host-side provisioning; the agent has no use for either and
-    # must not become a second source of truth for the version marker.
-    for name in ("BOOTSTRAP_VERSION", "BOOTSTRAP_MARKER"):
+def test_the_engine_entrypoint_constants_live_only_on_the_host():
+    # The agent has no use for either, and must not become a second source of
+    # truth for where the engine comes from.
+    for name in ("ENGINE_URL", "ENGINE_MARKER"):
         assert not hasattr(agent_constants, name), f"{name} must not live in agent/core/constants.py"
         assert hasattr(host_constants, name), f"{name} must live in host/core/constants.py"
 

@@ -406,7 +406,7 @@ def default_steps(provider, *, cache_dir, template_dir: Path, domain,
         # the routes it uses should say so in one sentence, not fail several
         # minutes into a compose run with a 404 on a route name.
         step("agent", lambda: agent_version_step(
-            provider, repair=lambda: _bootstrap(provider, force=True),
+            provider, repair=lambda: _bootstrap(provider, repair=True),
             reconnect=lambda: _reconnect(provider)),
             always_run=True),
         step("verify", lambda: verify_step(provider, template_dir, domain),
@@ -415,18 +415,16 @@ def default_steps(provider, *, cache_dir, template_dir: Path, domain,
     ]
 
 
-def _bootstrap(provider, *, force: bool = False) -> None:
+def _bootstrap(provider, *, repair: bool = False) -> None:
     from .bootstrap import bootstrap
-    bootstrap(provider, force=force)
+    bootstrap(provider, repair=repair)
 
 
 def _reconnect(provider):
-    """Re-provision the guest, recreate the agent container so it re-reads the
-    token bootstrap.sh just repaired, and dial it with the token the VM holds
-    now (the client caches the one it was built with)."""
+    """Reinstall in repair mode, which recreates the agent container so it
+    re-reads its token, then dial it with the token the VM holds now (the
+    client caches the one it was built with)."""
     from host.client import AgentClient
 
-    from .bootstrap import restart_agent
-    _bootstrap(provider, force=True)
-    restart_agent(provider)
+    _bootstrap(provider, repair=True)
     return AgentClient.for_provider(provider)

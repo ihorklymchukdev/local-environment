@@ -20,21 +20,19 @@ def _datas() -> list[tuple[str, str]]:
     return list(zip(quoted[::2], quoted[1::2]))
 
 
-def test_the_frozen_binary_bundles_nothing_from_the_agent():
+def test_the_frozen_binary_bundles_nothing_from_the_agent_or_the_engine():
     entries = _datas()
     assert entries, "the spec bundles no assets at all -- this test guards nothing"
     offenders = [src for src, dest in entries
-                 if "agent/" in src or dest.startswith("agent")]
+                 if "agent/" in src or "engine/" in src
+                 or dest.startswith(("agent", "engine"))]
     assert not offenders, (
-        f"the frozen host binary bundles agent files: {offenders}. The agent is "
-        "pulled as an image; anything the host must push into a VM that has no "
-        "agent yet belongs under host/provision/.")
+        f"the frozen host binary bundles VM-side files: {offenders}. The VM "
+        "pulls the agent image and fetches the engine itself; a copy in the "
+        "host would need a desktop release to change.")
 
 
 def test_every_bundled_source_exists_and_lands_where_its_reader_looks():
-    # A `datas` dest that disagrees with the module resolving it produces a
-    # binary that passes `omelet version` and fails minutes into a real setup.
-    from host.core.bootstrap import guest_assets
     from host.core.install import VERIFY_TEMPLATE
 
     entries = _datas()
@@ -42,9 +40,7 @@ def test_every_bundled_source_exists_and_lands_where_its_reader_looks():
         assert (SPEC.parent / source).resolve().is_file(), f"{source} does not exist"
 
     dests = {dest for _src, dest in entries}
-    expected = {local.parent.relative_to(ROOT).as_posix()
-                for local, _remote in guest_assets()}
-    expected.add(VERIFY_TEMPLATE.relative_to(ROOT).as_posix())
+    expected = {VERIFY_TEMPLATE.relative_to(ROOT).as_posix()}
     missing = expected - dests
     assert not missing, f"assets the host reads at runtime are not bundled: {missing}"
 
