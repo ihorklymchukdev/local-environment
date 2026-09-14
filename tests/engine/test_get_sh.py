@@ -53,6 +53,12 @@ def test_the_highest_engine_tag_wins_by_version_not_by_text(tmp_path):
     assert result.stdout.strip() == "engine-v0.10.0"
 
 
+def test_a_pre_release_tag_never_outranks_a_plain_release(tmp_path):
+    result = _resolve(tmp_path, tags=["engine-v1.0.0-rc1", "engine-v1.0.0", "engine-v0.9.0"])
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "engine-v1.0.0"
+
+
 def test_an_explicit_ref_wins_over_every_tag(tmp_path):
     result = _resolve(tmp_path, tags=["engine-v0.3.0"], OMELET_ENGINE_REF="feature/x")
     assert result.stdout.strip() == "feature/x"
@@ -98,6 +104,49 @@ def test_fetching_the_script_runs_the_install_not_just_its_functions(tmp_path, h
                                 capture_output=True, text=True)
     assert result.returncode != 0
     assert "could not download Omelet engine engine-v0.1.0" in result.stderr
+
+
+def _archive_with_install_sh(tmp_path: Path, ref: str, body: str) -> Path:
+    tar_path = tmp_path / "archive.tar.gz"
+    with tarfile.open(tar_path, "w:gz") as tar:
+        data = body.encode()
+        info = tarfile.TarInfo(name=f"local-environment-{ref}/engine/install.sh")
+        info.size = len(data)
+        tar.addfile(tarinfo=info, fileobj=__import__("io").BytesIO(data))
+    return tar_path
+
+
+@pytest.mark.parametrize("repair", [False, True])
+def test_a_successful_install_exits_zero_and_hands_install_sh_the_ref(tmp_path, repair):
+    # A regression test for a trap that referenced an out-of-scope local
+    # variable: under set -u it turned every successful install into exit 1.
+    root = tmp_path / "opt-omelet"
+    root.mkdir()
+    script = GET.read_text().replace("/opt/omelet", str(root))
+
+    ref = "engine-v0.1.0"
+    tar_path = _archive_with_install_sh(
+        tmp_path, ref, '#!/usr/bin/env bash\necho "install.sh args: $*"\n')
+
+    def make_curl(archive_path):
+        # curl -fsSL <url> -o <dest>: $1=-fsSL $2=url $3=-o $4=dest
+        return f"cp '{archive_path}' \"$4\"\n"
+
+    environ = _bin(tmp_path, dpkg="exit 0\n", curl=make_curl(tar_path),
+                   git=_git_listing(tmp_path, [ref]))
+    for name in ("OMELET_ENGINE_REF", "OMELET_ENGINE_REPAIR"):
+        environ.pop(name, None)
+    expected_args = ref
+    if repair:
+        environ["OMELET_ENGINE_REPAIR"] = "1"
+        (root / "engine.version").write_text(ref + "\n")
+        expected_args += " --repair"
+
+    result = subprocess.run(["bash", "-c", script], env=environ,
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert f"install.sh args: {expected_args}" in result.stdout
+    assert (root / "engine" / "install.sh").exists()
 
 
 def test_an_archive_without_the_engine_is_a_plain_failure(tmp_path):

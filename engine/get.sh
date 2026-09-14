@@ -4,10 +4,16 @@
 # bootstrap, or `curl -fsSL <url> | sudo bash` on a cloud VM), so it can rely
 # on nothing beside it. Run as root.
 set -euo pipefail
+# A private or misspelled repo must fail outright, not hang on a credential
+# prompt nobody is watching.
+export GIT_TERMINAL_PROMPT=0
 
 REPO="${OMELET_ENGINE_REPO:-https://github.com/ihorklymchukdev/local-environment}"
 MARKER=/opt/omelet/engine.version
 ENGINE_DIR=/opt/omelet/engine
+# Script-scoped, not local to main: the EXIT trap below runs after main
+# returns, once main's own locals are already out of scope.
+tmp=
 
 # resolve_ref <repo> <marker>: an explicit ref wins, a repair keeps what is
 # installed, anything else takes the highest engine-v* tag.
@@ -25,7 +31,9 @@ resolve_ref() {
     echo "could not reach $repo to find the latest Omelet engine" >&2
     return 1
   fi
-  latest="$(sed -n 's#.*refs/tags/##p' <<<"$tags" | sort -V | tail -n 1)"
+  # grep exits 1 when no tag matches (e.g. every tag is a pre-release, or
+  # there are none); the empty $latest that leaves is handled below, not here.
+  latest="$(sed -n 's#.*refs/tags/##p' <<<"$tags" | grep -E '^engine-v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)" || true
   if [[ -z "$latest" ]]; then
     echo "$repo has no engine-v* release to install" >&2
     return 1
@@ -46,18 +54,18 @@ main() {
     fi
   fi
 
-  local ref tmp
+  local ref
   ref="$(resolve_ref "$REPO" "$MARKER")"
   echo "installing Omelet engine $ref"
 
   tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
+  trap 'rm -rf "${tmp:-}"' EXIT
   if ! curl -fsSL "$REPO/archive/$ref.tar.gz" -o "$tmp/engine.tar.gz"; then
     echo "could not download Omelet engine $ref from $REPO" >&2
     exit 1
   fi
   if ! tar -xzf "$tmp/engine.tar.gz" -C "$tmp" --strip-components=1 --wildcards '*/engine/' 2>/dev/null; then
-    echo "$ref of $REPO has no engine/ directory" >&2
+    echo "$ref of $REPO is not a readable archive or has no engine/ directory" >&2
     exit 1
   fi
   if [[ ! -f "$tmp/engine/install.sh" ]]; then
