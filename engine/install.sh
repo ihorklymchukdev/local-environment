@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# One-time OS-level provisioning only. Everything above the OS -- Traefik, the
-# agent, their versions -- lives in stack.yml and is updated by re-running this.
+# Installs the engine into this VM. Run as root by get.sh from the unpacked
+# engine directory; re-running it is safe.
 set -euo pipefail
+
+ENGINE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 MARKER=/opt/omelet/.bootstrapped
 WANT_VERSION="${1:-1}"
@@ -94,7 +96,7 @@ chmod 640 /opt/omelet/agent.token
 # 7. traefik + the agent, as one compose stack.
 # Always pull: this is how an agent update reaches an already-provisioned VM,
 # so both the first install and every update need the network.
-test -f /opt/omelet/stack.yml || { echo 'stack.yml was never pushed to the VM' >&2; exit 1; }
+install -m 644 "$ENGINE_DIR/stack.yml" /opt/omelet/stack.yml
 if ! /usr/bin/docker compose -f /opt/omelet/stack.yml pull; then
   echo "could not pull the Omelet images: the registry was unreachable." >&2
   echo "Check the network connection or proxy and run setup again." >&2
@@ -108,24 +110,24 @@ if ! dpkg -s git >/dev/null 2>&1; then
   apt-get install -y git
 fi
 command -v python3 >/dev/null || { echo 'python3 is missing; the omelet command needs it' >&2; exit 1; }
-install -m 755 /opt/omelet/bin/omelet /usr/local/bin/omelet
+install -m 755 "$ENGINE_DIR/cli/omelet.py" /usr/local/bin/omelet
 
 # System-wide where the agent has such a place, so which user runs the
 # session does not matter.
 install -d /etc/claude-code /etc/codex/skills
-install -m 644 /opt/omelet/agents/omelet.md /etc/claude-code/CLAUDE.md
+install -m 644 "$ENGINE_DIR/instructions/omelet.md" /etc/claude-code/CLAUDE.md
 rm -rf /etc/codex/skills/omelet-setup
-cp -r /opt/omelet/agents/skills/omelet-setup /etc/codex/skills/
+cp -r "$ENGINE_DIR/skills/omelet-setup" /etc/codex/skills/
 
 # Per home where it is not: root (WSL sessions), every login account (Lima's
 # user) and /etc/skel for accounts made later. The docker group is the only
 # way a non-root user can read the agent token.
-bash /opt/omelet/bin/install-agents.sh /opt/omelet/agents /root 0:0
-bash /opt/omelet/bin/install-agents.sh /opt/omelet/agents /etc/skel 0:0
+bash "$ENGINE_DIR/lib/install-agents.sh" "$ENGINE_DIR" /root 0:0
+bash "$ENGINE_DIR/lib/install-agents.sh" "$ENGINE_DIR" /etc/skel 0:0
 while IFS=: read -r name uid gid home; do
   usermod -aG docker "$name"
-  bash /opt/omelet/bin/install-agents.sh /opt/omelet/agents "$home" "$uid:$gid"
-done < <(getent passwd | bash /opt/omelet/bin/login-users.sh /etc/shells)
+  bash "$ENGINE_DIR/lib/install-agents.sh" "$ENGINE_DIR" "$home" "$uid:$gid"
+done < <(getent passwd | bash "$ENGINE_DIR/lib/login-users.sh" /etc/shells)
 
 # 9. marker, last: a failure above must leave no marker behind.
 echo "$WANT_VERSION" > /opt/omelet/.bootstrapped

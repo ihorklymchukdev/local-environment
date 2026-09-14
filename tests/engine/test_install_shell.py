@@ -9,9 +9,9 @@ from host.core import constants
 # elsewhere. Same rule as tests/test_no_platform_leak.py and the two
 # import-boundary tests.
 ROOT = Path(__file__).resolve().parents[2]
-BOOTSTRAP = ROOT / "host" / "provision" / "bootstrap.sh"
-# The script still writes the old marker/stack path until Task 5 moves it into
-# engine/install.sh; these are this file's own literals, not host constants.
+BOOTSTRAP = ROOT / "engine" / "install.sh"
+# install.sh still writes the legacy marker; these literals stand in for host
+# constants that no longer exist.
 MARKER = f"{constants.GUEST_ROOT}/.bootstrapped"
 STACK = f"{constants.GUEST_ROOT}/stack.yml"
 
@@ -56,18 +56,6 @@ def test_bootstrap_invokes_docker_by_absolute_path():
     # is on, sending this VM's containers to Desktop's engine instead.
     for line in _commands():
         assert not _BARE_DOCKER.search(line), f"bare docker invocation: {line}"
-
-
-def test_smoke_test_template_publishes_no_host_port():
-    # The template reaches the browser through Traefik on the edge network, so a
-    # published port buys nothing and collides: the first real Windows run died
-    # with "failed to bind host port 0.0.0.0:8080/tcp: address already in use".
-    import yaml
-    compose = yaml.safe_load(
-        (ROOT / "host" / "provision" / "nginx-hello"
-         / "docker-compose.yml").read_text())
-    for name, svc in compose["services"].items():
-        assert not svc.get("ports"), f"{name} publishes a host port"
 
 
 def _commands() -> list[str]:

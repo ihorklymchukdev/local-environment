@@ -4,8 +4,8 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "host" / "provision" / "install-agents.sh"
-SOURCE = ROOT / "host" / "provision" / "agents"
+SCRIPT = ROOT / "engine" / "lib" / "install-agents.sh"
+SOURCE = ROOT / "engine"
 
 
 def _install(home: Path, source: Path = SOURCE) -> subprocess.CompletedProcess:
@@ -32,7 +32,7 @@ def test_the_codex_block_is_replaced_and_the_users_own_text_kept(tmp_path):
     shutil.copytree(SOURCE, source)
 
     _install(home, source)
-    (source / "omelet.md").write_text("new instructions\n")
+    (source / "instructions" / "omelet.md").write_text("new instructions\n")
     _install(home, source)
 
     text = agents_md.read_text()

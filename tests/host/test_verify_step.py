@@ -193,3 +193,15 @@ def test_verify_reports_the_agents_diagnosis_instead_of_polling_a_dead_url(
 
     assert requested == []
     assert client.list_projects() == []
+
+
+def test_smoke_test_template_publishes_no_host_port():
+    # The template reaches the browser through Traefik on the edge network, so a
+    # published port buys nothing and collides: the first real Windows run died
+    # with "failed to bind host port 0.0.0.0:8080/tcp: address already in use".
+    import yaml
+    from host.core.install import VERIFY_TEMPLATE
+
+    compose = yaml.safe_load((VERIFY_TEMPLATE / "docker-compose.yml").read_text())
+    for name, svc in compose["services"].items():
+        assert not svc.get("ports"), f"{name} publishes a host port"

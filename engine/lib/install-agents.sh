@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Copies Omelet's skill and Codex instructions into one home directory.
-# Run by bootstrap.sh as root, once per home:
-#   install-agents.sh <agents-source-dir> <home> <owner uid:gid>
+# Run by install.sh as root, once per home:
+#   install-agents.sh <engine-dir> <home> <owner uid:gid>
 set -euo pipefail
 
 SRC=$1
@@ -29,7 +29,7 @@ sed -i "\|^$BEGIN\$|,\|^$END\$|d" "$AGENTS_MD"
 if [[ -s "$AGENTS_MD" && -n "$(tail -c1 "$AGENTS_MD")" ]]; then
   echo >> "$AGENTS_MD"
 fi
-{ echo "$BEGIN"; cat "$SRC/omelet.md"; echo "$END"; } >> "$AGENTS_MD"
+{ echo "$BEGIN"; cat "$SRC/instructions/omelet.md"; echo "$END"; } >> "$AGENTS_MD"
 
 if [[ ! -e "$HOME_DIR/projects" && ! -L "$HOME_DIR/projects" ]]; then
   ln -s "$TARGET" "$HOME_DIR/projects"

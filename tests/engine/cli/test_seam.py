@@ -5,7 +5,7 @@ import pytest
 
 from agent.core.exec import Completed
 from tests.agent.test_api_routes import COMPOSE_MALFORMED, COMPOSE_ONE_WEB
-from tests.guest.loader import load
+from tests.engine.cli.loader import load
 
 cli = load()
 

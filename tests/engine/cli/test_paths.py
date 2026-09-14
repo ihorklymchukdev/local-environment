@@ -3,7 +3,7 @@ import stat
 
 import pytest
 
-from tests.guest.loader import load
+from tests.engine.cli.loader import load
 
 cli = load()
 

@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "host" / "provision" / "login-users.sh"
+SCRIPT = ROOT / "engine" / "lib" / "login-users.sh"
 
 
 def _run(passwd_lines: list[str], shells: list[str], tmp_path: Path) -> list[str]:

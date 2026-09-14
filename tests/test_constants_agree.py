@@ -52,7 +52,7 @@ def test_the_stack_deploys_the_image_version_the_agent_reports():
 
     root = Path(__file__).resolve().parent.parent
     stack = re.search(r"\$\{OMELET_AGENT_IMAGE:-[^}]+:([^}:]+)\}",
-                      (root / "host" / "provision" / "stack.yml").read_text())
+                      (root / "engine" / "stack.yml").read_text())
     dockerfile = re.search(r"^ARG AGENT_VERSION=(\S+)",
                            (root / "agent" / "Dockerfile").read_text(), re.M)
     assert stack, "stack.yml must default OMELET_AGENT_IMAGE with a tag"
@@ -67,7 +67,7 @@ def test_the_host_speaks_the_api_the_agent_serves():
 def test_the_guest_cli_holds_the_same_values_as_the_host_and_the_agent():
     # The guest CLI is copied into the VM on its own and can import neither
     # side, so its copies of the shared names are held equal here.
-    from tests.guest.loader import load
+    from tests.engine.cli.loader import load
 
     guest = _public(load())
     for side, other in (("agent", _public(agent_constants)),
