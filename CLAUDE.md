@@ -111,8 +111,9 @@ Do not add an `if windows` anywhere else — push the difference into a provider
 - `engine/install.sh` — Docker, `edge`, `/opt/omelet` permissions, token, the stack (recreating the
   agent on a new token or repair), Node ≥ 22.20 from NodeSource, `/usr/local/bin/omelet`,
   `/etc/claude-code/CLAUDE.md`, then per account (root + `lib/login-users.sh`) the Codex block and
-  `~/projects` link (`lib/install-agents.sh`) and `npx -y skills@1.5.26 add /opt/omelet/engine/skills
-  -g -a claude-code codex`. Writes `engine.version` last.
+  `~/projects` link (`lib/install-agents.sh`) and
+  `npx -y skills@1.5.26 add /opt/omelet/engine/skills -s '*' -g -a claude-code codex -y </dev/null`.
+  Writes `engine.version` last.
 - `engine/cli/omelet.py` — the `omelet` command **inside** the VM, used by coding agents:
   `up`/`new`/`clone`/`status`/`logs`/`down` over the agent API with the guest token. One
   stdlib-only file, loaded by tests by path (`tests/engine/cli/loader.py`); it shares constants
