@@ -378,6 +378,15 @@ def selfcheck():
         all_ok = all_ok and ok
         typer.echo(f"{'OK' if ok else 'MISSING':<7} {label} -> {path}")
 
+    # The setup window is five modules PyInstaller can only find through the
+    # spec's hiddenimports. A bundle missing one launches, shows a Dock icon
+    # and dies on the first draw -- which is exactly what this command exists
+    # to catch before a user does.
+    import importlib
+    for name in ("theme", "widgets", "wizard", "status", "app"):
+        importlib.import_module(f"host.setup_app.{name}")
+    typer.echo("✓ setup window modules import")
+
     raise typer.Exit(code=0 if all_ok else 1)
 
 

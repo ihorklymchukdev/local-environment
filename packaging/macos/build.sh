@@ -47,7 +47,9 @@ count="$(ls -1 "$app/Contents/MacOS" | wc -l | tr -d ' ')"
     ls -1 "$app/Contents/MacOS" >&2; exit 1; }
 
 # `version` never touches disk, so it passes on a bundle missing a datas entry;
-# selfcheck resolves each bundled asset the way its real caller does.
+# selfcheck resolves each bundled asset the way its real caller does, and now
+# also imports the five setup_app modules the spec's hiddenimports names above
+# -- `set -e` turns either failure into a build failure, not a user's.
 "$cli" version
 "$cli" selfcheck
 

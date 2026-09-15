@@ -15,12 +15,16 @@ packaging one, and it belongs in that report.
 | 1 | `bash packaging/macos/build.sh` on Apple Silicon | The build itself | Exits 0; `omelet version` and `omelet selfcheck` both pass against the frozen binary inside the .app | 2026-09-15 | local, 0.1.0, PyInstaller 6.22.3, Python 3.13.15 | **PASS.** `selfcheck` resolved both assets inside the bundle — `nginx-hello` through `Contents/Resources`, `omelet.yaml` through `Contents/Frameworks`. Two defects found and fixed by building: the two executables were named `Omelet` and `omelet`, which are one file on a case-insensitive filesystem, and BUNDLE wrote `CFBundleExecutable=omelet` with `LSBackgroundOnly=true` — a double-click would have run the CLI, windowless. Both are asserted in `build.sh` now. |
 | 2 | Install the .pkg on a machine that has never had Omelet | The real first-run path | Installer completes; `/Applications/Omelet.app` exists; `omelet version` works in a **new** shell (the symlink is on PATH) | UNRUN | UNRUN | UNRUN |
 | 3 | Open Omelet.app from Finder | The setup window is the app, not the CLI | The tkinter window opens with a Dock icon and runs the steps; it does not flash a terminal or exit immediately | **PASS, with two defects found and fixed** | 2026-09-15, local 0.1.0 | The window opened, listed every step, marked `preflight` failed, and showed both the raw error and the plain-language sentence above a working Close button. It also showed two things that were wrong, neither visible from the CLI: the step list included "Turning on Windows features" and "Restart needed" (now dropped for a provider with `remediable = False`), and preflight failed on a machine with Lima installed — an app started by LaunchServices has `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, so Homebrew's `limactl` was invisible to it (now resolved by `lima.find_limactl`). Re-run to confirm both. |
-| 4 | Setup on a Mac without Lima | The dead end reads as an instruction | Setup stops at preflight saying `install Lima (brew install lima)`, with no stack trace | **PASS (from source)** | 2026-09-15, source checkout | `omelet setup --headless` printed exactly that and exited 1. Before this branch it raised `AttributeError: 'LimaProvider' object has no attribute 'image'` before its first step. Re-run against the installed .pkg. |
+| 4 | Setup on a Mac without Lima | Setup **installs** Lima itself | `install_runtime` completes; `~/.local/share/omelet/lima/bin/limactl --version` prints `limactl version 2.2.0` | 2026-09-15 | local source checkout, .venv Python 3.13.15 | **PASS.** Ran `host.providers.lima_install.install()` directly — the exact function `LimaProvider.runtime().run()` wraps — against the real `~/.local/share/omelet` on this machine, rather than through `omelet setup --headless`, so the run could not go on to touch `create_vm` and disturb the Lima VM already on this machine (see the Notes section). Completed in 3.51s: downloaded and checksum-verified `lima-2.2.0-Darwin-arm64.tar.gz`, extracted it, ran the staged binary before swapping it into place, and left `~/.local/share/omelet/lima/bin/limactl --version` printing `limactl version 2.2.0`. This machine already had Lima 2.2.0 on its Homebrew PATH; the managed copy was fetched and verified independently of it, which is the point — `find_limactl` never has to fall back to a user's Homebrew Lima once setup has run once. |
+| 4 (superseded 2026-09-15) | Setup on a Mac without Lima | The dead end reads as an instruction | Setup stops at preflight saying `install Lima (brew install lima)`, with no stack trace | 2026-09-15, source checkout | source checkout | **SUPERSEDED by case 4 above, same day.** This was the right behavior before this branch: `omelet setup --headless` printed exactly that and exited 1, where before this branch it raised `AttributeError: 'LimaProvider' object has no attribute 'image'` before its first step. Kept for the record rather than deleted — the branch changed what "setup on a Mac without Lima" is supposed to do, not just how it's tested. |
 | 4b | Setup with Lima installed, under a Finder-like environment | The Homebrew lookup, which is what case 3 tripped over | `omelet doctor` passes with `env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin` | **PASS** | 2026-09-15, frozen 0.1.0 | Checked against the binary inside the built `Omelet.app`, not just from source: `✓ limactl installed`, exit 0. Lima 2.2.0 at `/opt/homebrew/bin/limactl`. |
 | 5 | Setup on a Mac with Lima installed | The whole install engine on macOS | Every step completes and `verify` returns a real HTTP 200; **record the wall-clock time** | UNRUN | UNRUN | UNRUN |
 | 6 | Re-run setup on a provisioned Mac | Idempotency | `preflight`/`remediate`/`reboot_gate` report skipped, the rest re-run, exit 0 | UNRUN | UNRUN | UNRUN |
 | 7 | `packaging/macos/uninstall.sh` | Cleanup | `limactl list` no longer shows `omelet-vm`; the app, the `/usr/local/bin/omelet` symlink and the pkg receipt are all gone | UNRUN | UNRUN | UNRUN |
 | 8 | Install the .pkg over an existing install | Upgrade | The new build replaces the old one in place; the existing VM is left alone and `omelet setup` finds it | UNRUN | UNRUN | UNRUN |
+| 9 | Setup with no network at `install_runtime` | The download step fails in plain language, and resumes rather than restarting | The step fails with the sentence from `_ACTIONS["install_runtime"]`, no stack trace, and a re-run with the network back resumes the partial download rather than restarting it | UNRUN | UNRUN | UNRUN |
+| 10 | Open Omelet.app on a provisioned Mac | The status screen, not the wizard, is what a set-up user sees | The status screen appears within a few seconds without running an install; the SSH command and the four fields are populated from `~/.lima/omelet-vm/ssh.config`; Copy puts them on the clipboard; `ssh -F … lima-omelet-vm` from Terminal gets a shell | UNRUN | UNRUN | UNRUN |
+| 11 | The window in dark mode and in light mode | `theme.py`'s luminance-based palette, not an OS check | Text is legible in both, with no white-on-white card and no black-on-black label, switched live via System Settings with the app reopened | UNRUN | UNRUN | UNRUN |
 
 ## Notes for the operator
 
@@ -41,3 +45,25 @@ packaging one, and it belongs in that report.
   user who cannot see it. Case 3 is the affordance that replaces it.
 - **Case 7 is destructive** — it deletes the VM and every project in it. Only
   run it where that is disposable.
+- **The `codesign --deep` hazard for a bundled `limactl` no longer applies.**
+  `build.sh`'s signing comment still describes it — re-signing every Mach-O in
+  the bundle would strip `com.apple.security.virtualization` from a `limactl`
+  shipped inside `Omelet.app`, breaking `vz` on signed builds only, on the
+  user's machine — but Lima is now fetched by `install_runtime` at setup time,
+  not bundled, so there is no third-party Mach-O under `Contents/MacOS` for
+  `--deep` to touch. The paragraph stays in `build.sh` because it is the reason
+  bundling was rejected in favor of fetching; deleting it would let a future
+  reader re-propose bundling without knowing why that failed before.
+- **This machine already has a Lima VM named `omelet-vm`**, `Running`, `vz`,
+  `aarch64`, predating this task and case 4's run above.
+  `~/.local/share/omelet/install-state.json` on it shows only
+  `{"completed": ["preflight"]}`,
+  which does not account for a running VM — whatever created it did not go
+  through `omelet setup`'s tracked steps, and there is no verbatim command log
+  for it. Case 4 above was run by calling the installer function directly for
+  exactly this reason, so as not to run `create_vm` against a machine that
+  already has a VM of that name. Its existence is not recorded as a pass
+  anywhere in this matrix or in `docs/lima-verification-report.md`: this
+  table's own rule — don't mark a case passed without the verbatim output —
+  applies to it too, and there is none to record. Investigate separately
+  before relying on it as evidence of anything.

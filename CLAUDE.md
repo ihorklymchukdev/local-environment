@@ -181,22 +181,29 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   `packaging/`, not just the platform you are on. The VM pulls the image and fetches the engine
   itself; only the `nginx-hello` smoke test and `omelet.yaml` ship with the host.
 - **The install step list is built from the provider, not from the platform.** Beyond the
-  `VmProvider` Protocol, `default_steps` reads five members off whichever provider it was handed:
-  `image()`, `register_resume()`, `location`, `terminal` and `remediable`. Two of them **remove
-  steps**: `image()` returning None means the VM platform fetches its own guest image (Lima does,
-  from `omelet.yaml`) and `fetch_image` disappears; `remediable = False` means the host OS has
-  nothing to turn on and `remediate`/`reboot_gate` disappear with it. A step that would be shown
-  and skipped is a step describing the other platform — the mac setup window listed "Turning on
-  Windows features". `tests/host/test_provider_surface.py::test_every_provider_answers_what_the_
-  install_list_asks_of_it` holds both providers to the surface; LimaProvider was missing two of
-  these, so `omelet setup` on macOS died with an `AttributeError` before its first step.
+  `VmProvider` Protocol, `default_steps` reads seven members off whichever provider it was handed:
+  `image()`, `register_resume()`, `location`, `terminal`, `remediable`, `runtime()` and `access()`.
+  Three of them **remove steps**: `image()` returning None means the VM platform fetches its own
+  guest image (Lima does, from `omelet.yaml`) and `fetch_image` disappears; `remediable = False`
+  means the host OS has nothing to turn on and `remediate`/`reboot_gate` disappear with it;
+  `runtime()` returning None means the VM platform ships with the host OS and `install_runtime`
+  disappears — a value names the step and installs what the platform needs (Lima, on macOS). A
+  step that would be shown and skipped is a step describing the other platform — the mac setup
+  window listed "Turning on Windows features". `access()` is how the status screen shows a user
+  the way into the VM without knowing what SSH is. `tests/host/test_provider_surface.py::test_
+  every_provider_answers_what_the_install_list_asks_of_it` holds both providers to the surface;
+  LimaProvider was missing two of these, so `omelet setup` on macOS died with an `AttributeError`
+  before its first step.
 - **A Mac app gets no shell PATH.** LaunchServices starts one with
   `/usr/bin:/bin:/usr/sbin:/sbin`, so Homebrew's prefix is absent and `shutil.which("limactl")`
-  answers no inside `Omelet.app` on a machine where `brew install lima` just succeeded — the setup
-  window told such a user to install Lima. `lima.find_limactl()` falls back to the Homebrew
-  prefixes and `get_provider()` hands the provider the resolved absolute path, the same way it
-  hands the WSL2 provider a rootfs. Anything else the host ever shells out to by name on macOS
-  needs the same treatment; `ssh` is safe only because it lives in `/usr/bin`.
+  answers no inside `Omelet.app` on a machine where `brew install lima` just succeeded. Setup now
+  installs its own pinned Lima into `~/.local/share/omelet/lima` (`host/providers/lima_install.py`),
+  and `find_limactl()` prefers that managed copy over anything on the PATH or in a Homebrew prefix
+  — a user's own Lima is never touched, and every assumption the provider makes about Lima's
+  on-disk layout is an assumption about the version setup put there. The Homebrew-prefix fallback
+  stays for a source checkout that has never run setup. The PATH finding still holds for anything
+  else the host ever shells out to by name on macOS; `ssh` is safe only because it lives in
+  `/usr/bin`.
 - **The two mac executables must not differ only in case.** `Omelet` and `omelet` are one file on a
   default macOS filesystem: COLLECT wrote both into `Contents/MacOS`, the second replaced the first,
   and the app launched the CLI windowlessly. The GUI binary is `omelet-setup` for that reason, and
@@ -247,6 +254,13 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   the token check, so `restart: always` never restarts a container refusing every other route, and
   the agent reads its token **once, at startup**, which is why repair recreates the container — then
   the host re-reads the token and dials again.
+- **The setup window is two screens, and the app opens on the status one.** `host/setup_app/app.py`
+  routes on `host/core/status.py::probe` — VM exists, guest reachable, `engine.version` present,
+  agent API supported — and starts the wizard by itself only when nothing is provisioned. `theme.py`
+  picks light or dark from the luminance of the ttk background rather than by asking which OS this
+  is, which is what keeps the no-platform-branching invariant true in the UI layer. Fonts are
+  tkinter's named system fonts; a hardcoded family name is how every label came to ask macOS for
+  "Segoe UI".
 - CLI command bodies use **function-local imports** deliberately (keeps `omelet --help` and the
   smoke test fast, and avoids importing provider code on unsupported hosts). `cli._provider_factory`
   is a module attribute so tests can monkeypatch the provider.

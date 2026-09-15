@@ -53,6 +53,37 @@ run that is still pending: the same blindness applies to **anything else the
 host shells out to by name** on macOS, and `limactl` itself will run with that
 minimal PATH — whether it needs more is one of the unknowns step 3 answers.
 
+## 2026-09-15 — `install_runtime`, run directly (Task 10)
+
+`install_runtime` is the first macOS path that can be verified **without
+booting a VM**: it ends by running the downloaded `limactl` and reading its
+version back. Called `host.providers.lima_install.install()` directly — the
+function `LimaProvider.runtime().run()` wraps — against this machine's real
+`~/.local/share/omelet`, on the same macOS 26.6.2 (build 25G83) arm64 machine
+as the run above. It completed in 3.51s: downloaded and checksum-verified
+`lima-2.2.0-Darwin-arm64.tar.gz`, extracted it, ran the staged binary before
+swapping it into place, and left `~/.local/share/omelet/lima/bin/limactl
+--version` printing `limactl version 2.2.0`. See
+`docs/macos-install-test-matrix.md` case 4.
+
+`~/.lima/<name>/ssh.config` now has **two** readers — `LimaProvider.forward()`
+and `LimaProvider.access()`. Its existence, name and layout are still an
+assumption no live run has confirmed; the difference this work makes is that a
+wrong assumption now shows on the status screen a user looks at first, instead
+of only inside a port forward nobody exercises.
+
+`omelet.yaml` now declares an `x86_64` image alongside the `aarch64` one, but
+it still sets `rosetta.enabled: true`. Rosetta is an arm64-only feature.
+Nobody has run an Intel build, so this is an open question for that run, not a
+defect or a fix.
+
+**Everything else is unchanged.** No VM has been created by this work.
+`create_vm` is still the first unproven step, and `vz`, Rosetta, the port
+forwards and the ssh control master are all still assumptions. **The
+UNVERIFIED banners in `host/providers/lima.py` and `host/providers/omelet.yaml`
+stay.** `forwards()` still returns an empty list on Lima; that open question is
+not touched by this work.
+
 ## What Phase 2 changed on the Lima side, unverified
 
 - `forward()` no longer raises for distinct ports. It asks the ssh control master
