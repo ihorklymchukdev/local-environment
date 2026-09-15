@@ -67,10 +67,13 @@ one, and it belongs in that report.
   on this machine shows `{"completed": ["preflight"]}` — an earlier draft of
   this bullet read that as evidence the VM bypassed `omelet setup`'s tracked
   steps. That reading was backwards: `install-state.json` never records an
-  `always_run` step, and `preflight` is the only step without that flag, so
-  `{"completed": ["preflight"]}` is exactly what a **successful** setup run
-  leaves behind, not an interrupted one. Full details and the command trail
-  are in `docs/lima-verification-report.md`. Case 4 above still calls the
+  `always_run` step, and every step after `preflight` is `always_run`, so
+  `{"completed": ["preflight"]}` is **consistent with** a successful setup
+  run — but it is consistent with a run that died at `create_vm`,
+  `bootstrap`, `connect` or `verify` too, since none of those get persisted
+  here either. This file alone cannot tell the two apart. Full details, the
+  command trail, and the better evidence that does distinguish them are in
+  `docs/lima-verification-report.md`. Case 4 above still calls the
   installer function directly rather than running `omelet setup --headless`
   end to end, so as not to run `create_vm` a second time against a VM of the
   same name — that reasoning holds regardless of how this VM is read. **Case 7

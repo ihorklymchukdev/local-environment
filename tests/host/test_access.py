@@ -98,6 +98,31 @@ def test_lima_notes_which_fields_fell_back_on_a_partial_config(tmp_path):
     assert "what Omelet asks Lima for" not in access.note
 
 
+def test_lima_shows_port_unconfirmed_when_ssh_config_has_no_port_line(tmp_path):
+    # The exact shape the DECLARED_SSH_PORT finding was about: ssh.config
+    # exists (so this is not the before-first-boot case) and has Host, User
+    # and Identity file, but no Port line at all -- a partial write, or a
+    # future Lima format change. The screen must not fill Port from
+    # omelet.yaml's requested value here either: that value has never been
+    # confirmed as what Lima actually binds, and showing it as if it were
+    # read from this real, present ssh.config would be worse than the
+    # before-first-boot case, not better.
+    home = tmp_path / ".lima" / "omelet-vm"
+    home.mkdir(parents=True)
+    (home / "ssh.config").write_text(
+        'Host lima-omelet-vm\n  Hostname 127.0.0.1\n'
+        '  User you\n  IdentityFile "/Users/you/.lima/_config/user"\n')
+    access = LimaProvider(name="omelet-vm", runner=FakeRunner(),
+                          lima_home=tmp_path / ".lima", data_root=tmp_path).access()
+    assert _fields(access)["Host"] == "127.0.0.1"
+    assert _fields(access)["Port"] == "assigned when the virtual machine is created"
+    assert _fields(access)["User"] == "you"
+    assert access.note
+    assert "Port is requested in omelet.yaml but not confirmed" in access.note
+    assert "what Omelet asks Lima for" not in access.note
+    assert "User and Identity file" not in access.note
+
+
 def test_lima_parsing_is_case_insensitive_and_unquotes(tmp_path):
     home = tmp_path / ".lima" / "omelet-vm"
     home.mkdir(parents=True)

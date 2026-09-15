@@ -143,21 +143,46 @@ below). The `lima.yaml` on disk is byte-identical to `git show
 3560692:host/providers/omelet.yaml`, which predates both the `x86_64` image
 and the `ssh:` block — this VM was created by exactly `LimaProvider.create()`
 against that revision, most likely by a human running this project's own
-setup or `limactl` by hand, not by any automated test.
+`omelet setup` (see below for why the timing points at `setup` rather than a
+bare `limactl start`), not by any automated test.
 
-**Correcting a misreading in an earlier draft of this page:**
+**Correcting a misreading in an earlier draft of this page — twice now.**
 `~/.local/share/omelet/install-state.json` on this machine shows
-`{"completed": ["preflight"]}`, and an earlier version of this section took
-that to mean the VM's creation was unaccounted for by `omelet setup`'s own
-tracked steps. That
-reading is backwards. `host/core/install.py` never persists an `always_run`
-step into `install-state.json`, and `preflight` is the only step in
-`default_steps` without that flag — so `{"completed": ["preflight"]}` is
-**exactly the state a fully successful `omelet setup --headless` run leaves
-behind**, not evidence that setup stalled after `preflight`. Timeline: this
-VM was created at 10:37 and the engine install finished around 13:10, about
-six hours before this correction was written — consistent with one ordinary,
-successful `omelet setup` run, not a hand-run `limactl start` bypassing it.
+`{"completed": ["preflight"]}`. A first draft read that as evidence the VM's
+creation was unaccounted for by `omelet setup`'s own tracked steps — backwards,
+since `install-state.json` never persists an `always_run` step, and *every*
+step in `default_steps` after `preflight` (`install_runtime`, `create_vm`,
+`bootstrap`, `connect`, `verify`, `finish`) is `always_run`. A second draft
+then overcorrected the other way, calling `{"completed": ["preflight"]}`
+"exactly the state a fully successful run leaves behind" and the VM's
+creation "not a hand-run `limactl start`" — but for the same reason nothing
+after `preflight` is ever persisted, this file is equally consistent with a
+run that died at any of those later steps. It cannot by itself tell success
+from interruption, and a 2.5-hour gap between the VM's creation (10:37) and
+the engine install finishing (~13:10) is not what an uninterrupted run looks
+like either — that gap is itself evidence against "one ordinary,
+uninterrupted run", not for it.
+
+The evidence that actually says something is a timestamp, not the file's
+contents: `install-state.json`, `~/.lima/omelet-vm/lima.yaml` and
+`~/.lima/omelet-vm/lima-version` were all written in the same second,
+`2026-09-15 10:37:54` (confirmed directly: `stat -f "%Sm" -t "%Y-%m-%d
+%H:%M:%S" ~/.local/share/omelet/install-state.json
+~/.lima/omelet-vm/lima.yaml ~/.lima/omelet-vm/lima-version`, all three lines
+identical). `install-state.json` is written only by `InstallState.mark()`,
+called only from inside `run_install()` immediately after `preflight`
+succeeds — nothing about a bare `limactl start` touches that path at all.
+For it to land in the same second as the files Lima itself writes when
+`create()` runs, `preflight` finishing and `create_vm` starting must have
+been roughly one second apart, which is what one continuous `omelet setup`
+process looks like far more than two separately-timed invocations
+coincidentally landing in the same second. **What this does and does not
+show:** it is good evidence that `omelet setup`'s own code path, not a
+bare `limactl start`, is what created this VM. It says nothing about
+whether that same run went on to reach `bootstrap`, `connect`, `verify` or
+`finish` — none of those are persisted either, so the engine actually being
+installed (confirmed separately, above) is evidence for `bootstrap` having
+run, not for the run as a whole having completed.
 
 **One thing this VM cannot answer, and does not disprove:** whether Lima
 honours `omelet.yaml`'s `ssh.localPort`. Its `lima.yaml` predates that field
