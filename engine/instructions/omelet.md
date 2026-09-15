@@ -11,5 +11,6 @@ always give them the project's URL.
   or the project gets no URL.
 - Never edit `.omelet/overlay.yml`; it is generated.
 - Something broken? `omelet logs`.
-- New project, repo URL, or an archive to set up: use the `omelet-setup` skill
-  (no skills? run `omelet --help`).
+- An idea for an app, or a change to a project: start with the `omelet-brainstorm` skill.
+- Something to set up, import or run — a repo URL, an archive, a folder: the `omelet-setup`
+  skill (no skills? run `omelet --help`).
