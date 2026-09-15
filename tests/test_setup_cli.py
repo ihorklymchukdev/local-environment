@@ -203,14 +203,49 @@ def test_setup_hands_the_window_a_factory_it_can_call_twice(monkeypatch, tmp_pat
 
     The steps close over provider state (`provider.rootfs` is assigned while
     the list is built), so handing the window one list and running it twice
-    would re-run the second install against the first one's bindings.
+    would re-run the second install against the first one's bindings. Calling
+    steps_factory() twice and discarding the results only proves the
+    parameter is callable twice -- a `lambda: shared_list` closing over one
+    list passes that identically, so this keeps both results and asserts
+    they are distinct objects.
     """
+    # The monkeypatch target below is a dotted string, which forces a real
+    # import of host.setup_app.app -- and therefore of tkinter, a stdlib
+    # module this repo's own dev sandbox (WSL) does not always have installed.
+    pytest.importorskip("tkinter")
+
     captured = {}
+    provider = StubProvider()
 
     def fake_run_window(provider, steps_factory, state, *, resumed=False):
         captured["provider"] = provider
-        steps_factory()
-        steps_factory()
+        captured["a"] = steps_factory()
+        captured["b"] = steps_factory()
+        captured["resumed"] = resumed
+        return 0
+
+    monkeypatch.setattr("host.setup_app.app.run_window", fake_run_window)
+    monkeypatch.setattr(cli, "_provider_factory", lambda: provider)
+    monkeypatch.setattr("host.providers.default_install_dir",
+                        lambda: tmp_path / "vm")
+
+    result = runner.invoke(cli.app, ["setup"])
+    assert result.exit_code == 0
+    assert captured["resumed"] is False
+    assert captured["provider"] is provider
+    assert captured["a"] is not captured["b"], \
+        "steps_factory must build a fresh list on every call, not close over one"
+
+
+def test_setup_resume_reaches_the_window_as_resumed(monkeypatch, tmp_path):
+    """--resume must reach the window, not just the headless path -- the
+    router's own copy of `resumed` is what decides whether the wizard opens
+    with "Continuing setup after the restart"."""
+    pytest.importorskip("tkinter")
+
+    captured = {}
+
+    def fake_run_window(provider, steps_factory, state, *, resumed=False):
         captured["resumed"] = resumed
         return 0
 
@@ -219,9 +254,9 @@ def test_setup_hands_the_window_a_factory_it_can_call_twice(monkeypatch, tmp_pat
     monkeypatch.setattr("host.providers.default_install_dir",
                         lambda: tmp_path / "vm")
 
-    result = runner.invoke(cli.app, ["setup"])
+    result = runner.invoke(cli.app, ["setup", "--resume"])
     assert result.exit_code == 0
-    assert captured["resumed"] is False
+    assert captured["resumed"] is True
 
 
 def test_packaging_spec_bundles_exactly_the_assets_selfcheck_verifies():

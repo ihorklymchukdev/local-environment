@@ -211,3 +211,30 @@ def test_diagnostics_work_before_anything_is_provisioned():
     text = status.diagnostics_text(Readiness(problem="limactl is not installed"),
                                    None, version="0.1.0")
     assert "limactl is not installed" in text
+
+
+from host.setup_app import app as setup_app
+
+
+def test_the_finish_sentence_is_folded_into_the_log_for_diagnostics():
+    # wizard.split_finish_message strips the finish step's `done` message out
+    # of the wizard's own log box so the row it names can still turn done --
+    # which means nothing else appends it anywhere unless this does. Without
+    # it, Copy diagnostics on the status screen that follows a successful run
+    # would carry every log line except the one sentence the run was for.
+    log = setup_app._log_with_notice(("bootstrap: done",),
+                                     "Ready. Try: omelet up <folder>")
+    assert log == ("bootstrap: done", "Ready. Try: omelet up <folder>")
+
+
+def test_an_empty_finish_message_leaves_the_log_untouched():
+    # A cancelled run's Outcome carries no message; appending an empty string
+    # would put a blank line in the diagnostics for no reason.
+    assert setup_app._log_with_notice(("a", "b"), "") == ("a", "b")
+
+
+def test_diagnostics_carry_the_finish_sentence_once_it_is_in_the_log():
+    text = status.diagnostics_text(
+        READY, ACCESS, version="0.1.0",
+        log=setup_app._log_with_notice((), "Ready. Try: omelet up <folder>"))
+    assert "Ready. Try: omelet up <folder>" in text

@@ -18,6 +18,15 @@ from . import status as status_screen
 from . import theme, widgets, wizard
 
 
+def _log_with_notice(log: tuple[str, ...], message: str) -> tuple[str, ...]:
+    """The finish step's closing sentence never reaches the wizard's own log
+    box (`wizard.split_finish_message` strips it before `_append` so the row
+    it names can still turn done) -- so unless it lands here too, Copy
+    diagnostics on the status screen that follows would carry everything the
+    run logged except the one sentence the run was for."""
+    return (*log, message) if message else log
+
+
 def run_window(provider, steps_factory, state, *, resumed: bool = False) -> int:
     root = tk.Tk()
     root.title("Omelet Setup")
@@ -46,7 +55,7 @@ def run_window(provider, steps_factory, state, *, resumed: bool = False) -> int:
         app_state["screen"] = frame
         frame.pack(fill="both", expand=True)
 
-    def show_status(readiness: Readiness) -> None:
+    def show_status(readiness: Readiness, notice: str = "") -> None:
         from host.core import constants
         try:
             access = provider.access()
@@ -57,26 +66,35 @@ def run_window(provider, steps_factory, state, *, resumed: bool = False) -> int:
         show(status_screen.StatusScreen(
             root, palette, fonts, readiness, access,
             on_setup=start_wizard, on_close=close,
-            version=constants.APP_VERSION, log=app_state["log"]))
+            version=constants.APP_VERSION, log=app_state["log"], notice=notice))
 
-    def start_wizard() -> None:
+    def start_wizard(*, first: bool = False) -> None:
         # A fresh list every time: the steps close over provider state
         # (`provider.rootfs` is assigned while the list is built), so a
         # re-run against a list built for an earlier run would run the
         # second install against the first one's bindings.
+        #
+        # `resumed` only ever describes the run this window opened for -- a
+        # user who presses "Re-run setup" afterwards asked for this run
+        # themselves, and must not see "you don't need to do anything" about
+        # a restart that happened, if at all, several runs ago. Only the one
+        # call made before anything else runs may claim it.
         screen = wizard.WizardScreen(root, palette, fonts, steps_factory(),
                                      state, on_finished=wizard_finished,
-                                     resumed=resumed)
+                                     resumed=first and resumed)
         show(screen)
         screen.start()
 
     def wizard_finished(outcome: wizard.Outcome) -> None:
         app_state["code"] = outcome.code
-        app_state["log"] = outcome.log
+        app_state["log"] = _log_with_notice(outcome.log, outcome.message)
         if outcome.code == 0:
             # Straight to the screen that says how to get in: the install's
-            # closing sentence is the beginning of the next thing the user does.
-            begin_probe(then=show_status)
+            # closing sentence is the beginning of the next thing the user
+            # does, so it has to survive onto the screen that follows -- not
+            # just into the log, which nobody opens by default.
+            begin_probe(then=lambda readiness: show_status(
+                readiness, notice=outcome.message))
 
     # --- the probe, off the main thread so the window draws immediately ---
 
@@ -100,7 +118,7 @@ def run_window(provider, steps_factory, state, *, resumed: bool = False) -> int:
 
     if resumed:
         # A window that opened by itself after a restart has one job.
-        start_wizard()
+        start_wizard(first=True)
     else:
         begin_probe(then=show_status, auto_setup=True)
 
@@ -118,9 +136,23 @@ class _Spinner(tk.Frame):
         self._list = widgets.StepList(self, palette, fonts, [("probe", "Looking for the virtual machine")])
         self._list.set_state("probe", "running")
         self._list.pack(fill="x", padx=theme.PAD, pady=theme.PAD)
+        self._after_id: str | None = None
         self._tick()
 
     def _tick(self) -> None:
-        if self.winfo_exists():
-            self._list.tick()
-            self.after(80, self._tick)
+        self._list.tick()
+        self._after_id = self.after(80, self._tick)
+
+    def destroy(self) -> None:
+        # `show()` destroys every screen it replaces, but Misc.destroy only
+        # deletes the Tcl command backing this widget -- it does not cancel a
+        # pending `after()`, so the next tick fires against a command that no
+        # longer exists and Tk logs a background error ("invalid command
+        # name"). Cancelling here is also what makes the `winfo_exists()`
+        # check this used to open `_tick` with pointless: destroy() is the
+        # only path off this screen, so by the time a stray tick could fire,
+        # this override has already cancelled it.
+        if self._after_id is not None:
+            self.after_cancel(self._after_id)
+            self._after_id = None
+        super().destroy()

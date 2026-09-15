@@ -70,7 +70,8 @@ def diagnostics_text(readiness: Readiness, access: Access | None, *,
 class StatusScreen(tk.Frame):
     def __init__(self, parent, palette: theme.Palette, fonts,
                  readiness: Readiness, access: Access | None, *,
-                 on_setup, on_close, version: str, log: tuple[str, ...] = ()):
+                 on_setup, on_close, version: str, log: tuple[str, ...] = (),
+                 notice: str = ""):
         super().__init__(parent, bg=palette.bg)
         self._palette, self._fonts = palette, fonts
         self._readiness, self._access = readiness, access
@@ -85,6 +86,15 @@ class StatusScreen(tk.Frame):
         tk.Label(body, text=detail, bg=palette.bg, fg=palette.text,
                  font=fonts["body"], anchor="w", justify="left",
                  wraplength=520).pack(fill="x")
+
+        if notice:
+            # The wizard's own closing sentence -- e.g. where the VM lives and
+            # what to type next. It is what just happened, not an error, so it
+            # reads as body text and sits above the access panel where a user
+            # landing here straight off a successful install can't miss it.
+            tk.Label(body, text=notice, bg=palette.bg, fg=palette.text,
+                     font=fonts["body"], anchor="w", justify="left",
+                     wraplength=520).pack(fill="x", pady=(10, 0))
 
         if access is not None and readiness.ready:
             self._access_panel(body, access)
