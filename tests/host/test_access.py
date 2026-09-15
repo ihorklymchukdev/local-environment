@@ -72,6 +72,26 @@ def test_lima_falls_back_to_the_declared_port_before_the_first_boot(tmp_path):
     assert _fields(access)["Port"] == "39022"
     assert _fields(access)["Host"] == "127.0.0.1"
     assert access.note, "the screen must say these are defaults, not live values"
+    assert "Host and Port" in access.note
+    assert "User and Identity file" in access.note
+
+
+def test_lima_notes_which_fields_fell_back_on_a_partial_config(tmp_path):
+    # A truncated write, or a future Lima format change, can leave some
+    # directives present and others missing -- not just all-or-nothing. The
+    # note must say which fields are shown from a default even then, rather
+    # than silently mixing real and guessed values.
+    home = tmp_path / ".lima" / "omelet-vm"
+    home.mkdir(parents=True)
+    (home / "ssh.config").write_text(
+        "Host lima-omelet-vm\n  Hostname 127.0.0.1\n  Port 41022\n")
+    access = LimaProvider(name="omelet-vm", runner=FakeRunner(),
+                          lima_home=tmp_path / ".lima", data_root=tmp_path).access()
+    assert _fields(access)["Host"] == "127.0.0.1"
+    assert _fields(access)["Port"] == "41022"
+    assert access.note
+    assert "User and Identity file" in access.note
+    assert "what Omelet asks Lima for" not in access.note
 
 
 def test_lima_parsing_is_case_insensitive_and_unquotes(tmp_path):

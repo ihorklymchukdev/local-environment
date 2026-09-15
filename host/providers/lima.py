@@ -42,6 +42,53 @@ def parse_ssh_config(text: str) -> dict[str, str]:
     return found
 
 
+# Port (and, by construction, Host -- portForwards always binds it to
+# LOOPBACK) is a value Omelet itself hands Lima, in omelet.yaml's
+# `ssh.localPort`. User and Identity file are never configured anywhere: they
+# are guesses at Lima's usual behaviour for a fresh guest account
+# (`getpass.getuser()`, `_config/user`), and a host username Lima sanitizes
+# when provisioning the guest (spaces, uppercase, unicode) makes the guess
+# wrong. The fallback note below must say which kind of default each missing
+# field is, not lump them together as "the values Omelet asks Lima for".
+_CONFIGURED_LABELS = ("Host", "Port")
+_GUESSED_LABELS = ("User", "Identity file")
+_ALL_LABELS = _CONFIGURED_LABELS + _GUESSED_LABELS
+
+
+def _join_and(labels: list[str]) -> str:
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} and {labels[1]}"
+    return ", ".join(labels[:-1]) + f", and {labels[-1]}"
+
+
+def _fallback_note(missing: list[str], *, config_exists: bool) -> str:
+    """Names exactly which fields are shown from a default instead of from
+    Lima's own ssh.config, so the screen never mixes real and guessed values
+    with no indication which is which -- a truncated write or a future Lima
+    format change can leave some fields present and others missing, not just
+    all-or-nothing. A user reading this has not got a shell yet, so it says
+    what to do about it in the same two sentences.
+    """
+    if not missing:
+        return ""
+    configured = [label for label in _CONFIGURED_LABELS if label in missing]
+    guessed = [label for label in _GUESSED_LABELS if label in missing]
+    clauses = []
+    if configured:
+        verb = "is" if len(configured) == 1 else "are"
+        clauses.append(f"{_join_and(configured)} {verb} what Omelet asks Lima for")
+    if guessed:
+        verb = "is" if len(guessed) == 1 else "are"
+        clauses.append(f"{_join_and(guessed)} {verb} Lima's own usual default "
+                       "and may not match once the virtual machine exists")
+    lead = ("The virtual machine has not been started yet" if not config_exists
+            else "Lima has not written all of its connection details yet")
+    return (f"{lead}, so " + ", but ".join(clauses)
+           + ". Run setup, then open this window again.")
+
+
 # Homebrew installs limactl here and puts neither prefix on the PATH an app
 # launched from Finder is given -- LaunchServices starts one with
 # /usr/bin:/bin:/usr/sbin:/sbin, and a GUI process inherits no shell profile.
@@ -246,15 +293,14 @@ class LimaProvider:
         this reads Lima's own ssh.config rather than shelling `limactl
         show-ssh` or hand-assembling the command from `self.name` alone."""
         config = self._ssh_config()
-        note = ""
         try:
             found = parse_ssh_config(config.read_text())
+            config_exists = True
         except OSError:
             found = {}
-        if not found:
-            note = ("The virtual machine has not been started yet, so these are "
-                    "the values Omelet asks Lima for rather than the ones Lima "
-                    "has written down. Run setup, then open this window again.")
+            config_exists = False
+        missing = [label for label in _ALL_LABELS if label not in found]
+        note = _fallback_note(missing, config_exists=config_exists)
         import getpass
         fields = (
             AccessField("Host", found.get("Host", LOOPBACK)),
