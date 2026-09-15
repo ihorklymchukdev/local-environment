@@ -65,3 +65,33 @@ def test_there_is_a_glyph_for_every_status_run_install_can_report():
     for status in ("pending", "running", "done", "skipped", "failed", "reboot"):
         assert status in widgets.GLYPHS
     assert Progress("x", "running").status in widgets.GLYPHS
+
+
+from host.core.install import Step
+from host.setup_app import wizard
+
+
+def test_a_step_label_prefers_the_providers_own_words():
+    # "Installing Lima 2.2.0" is Lima's sentence; the installer has no business
+    # keeping a second copy of it in a dict keyed by step name.
+    step = Step("install_runtime", lambda emit: None, label="Installing Lima 2.2.0")
+    assert wizard.step_label(step) == "Installing Lima 2.2.0"
+
+
+def test_a_step_without_a_label_falls_back_to_the_installers_wording():
+    assert wizard.step_label(Step("create_vm", lambda: None)) == \
+        "Creating the virtual machine"
+
+
+def test_an_unknown_step_shows_its_own_name_rather_than_nothing():
+    assert wizard.step_label(Step("something_new", lambda: None)) == "something_new"
+
+
+def test_the_label_table_has_no_entry_for_a_step_the_provider_names():
+    # install_runtime's text comes from provider.runtime().label. A second copy
+    # here would go stale the first time the pinned Lima version changes.
+    assert "install_runtime" not in wizard.LABELS
+
+
+def test_the_windows_only_steps_are_still_named_for_windows():
+    assert wizard.LABELS["remediate"] == "Turning on Windows features"
