@@ -148,10 +148,10 @@ class _Spinner(tk.Frame):
         # deletes the Tcl command backing this widget -- it does not cancel a
         # pending `after()`, so the next tick fires against a command that no
         # longer exists and Tk logs a background error ("invalid command
-        # name"). Cancelling here is also what makes the `winfo_exists()`
-        # check this used to open `_tick` with pointless: destroy() is the
-        # only path off this screen, so by the time a stray tick could fire,
-        # this override has already cancelled it.
+        # name"). This also explains why the `winfo_exists()` guard that used
+        # to open `_tick` could never fire: destroy() is the only path off
+        # this screen, so by the time a stray tick could arrive, this
+        # override has already cancelled it.
         if self._after_id is not None:
             self.after_cancel(self._after_id)
             self._after_id = None
