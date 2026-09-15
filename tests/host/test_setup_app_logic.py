@@ -43,6 +43,22 @@ def test_elapsed_time_is_only_shown_once_there_is_some(seconds, text):
     assert widgets.format_elapsed(seconds) == text
 
 
+@pytest.mark.parametrize("base_size,delta,expected", [
+    (13, 7, 20),      # ordinary positive base: title grows as intended
+    (13, -1, 12),     # ordinary positive base: small shrinks as intended
+    (-12, 7, -19),    # negative (pixel) base: title must still grow *larger*
+    (-12, -1, -11),   # negative (pixel) base: small must still shrink
+    (0, -1, 1),       # a delta that would cross zero floors at magnitude 1
+    (3, -5, 1),       # same floor, from a positive base
+])
+def test_derived_size_moves_in_the_intended_direction_regardless_of_sign(
+        base_size, delta, expected):
+    # tkinter uses negative sizes for pixels (a known Windows pattern); naive
+    # `base_size + delta` inverts every derived size when base_size < 0, so
+    # "title" (delta +7) would come out smaller than body instead of larger.
+    assert theme.derived_size(base_size, delta) == expected
+
+
 def test_there_is_a_glyph_for_every_status_run_install_can_report():
     from host.core.install import Progress
     # The five statuses run_install emits, and the sixth the UI starts rows in.

@@ -28,6 +28,18 @@ def format_elapsed(seconds: float) -> str:
     return f"{whole // 60}m {whole % 60:02d}s"
 
 
+def _mapped_width(canvas: tk.Canvas, fallback: int = 520) -> int:
+    """The canvas's width once Tk has actually mapped it.
+
+    Tk reports 1, not 0, for a widget that hasn't been mapped yet -- so
+    `winfo_width() or 520` lets a width of 1 straight through, and a row drawn
+    at width 1 puts every right-aligned item at a negative x. Self-correcting
+    on the next <Configure>, but only after one frame drawn off-canvas.
+    """
+    width = canvas.winfo_width()
+    return width if width > 1 else fallback
+
+
 def rounded(canvas: tk.Canvas, x1, y1, x2, y2, radius, **kwargs) -> int:
     """A rounded rectangle. Canvas has no such primitive, and a square-cornered
     card next to macOS's own chrome reads as a rendering failure."""
@@ -88,7 +100,7 @@ class StepList(tk.Canvas):
 
     def redraw(self) -> None:
         self.delete("all")
-        width = self.winfo_width() or 520
+        width = _mapped_width(self)
         for index, (name, text) in enumerate(self._labels):
             y = 12 + index * theme.ROW_HEIGHT
             state = self._state[name]
@@ -141,7 +153,7 @@ class ProgressBar(tk.Canvas):
 
     def _draw(self) -> None:
         self.delete("all")
-        width = self.winfo_width() or 520
+        width = _mapped_width(self)
         self.create_rectangle(0, 0, width, self.HEIGHT,
                               fill=self._palette.border, outline="")
         if self._value > 0:
@@ -169,6 +181,19 @@ class Button(tk.Canvas):
 
     def enable(self, enabled: bool) -> None:
         self._enabled = enabled
+        self._draw(hover=False)
+
+    def set_text(self, text: str) -> None:
+        """Change the label in place, e.g. Copy -> Copied.
+
+        No-ops once the widget is gone: a caller may hold this Button past a
+        deferred `after()` callback that fires after the window closed, and
+        drawing on a destroyed canvas raises TclError rather than doing
+        nothing the way a plain attribute set would.
+        """
+        if not self.winfo_exists():
+            return
+        self._text = text
         self._draw(hover=False)
 
     def _draw(self, *, hover: bool) -> None:
@@ -216,10 +241,13 @@ class FieldRow(tk.Frame):
     def _on_copy(self) -> None:
         self.clipboard_clear()
         self.clipboard_append(self._value)
-        self._copy._text = "Copied"
-        self._copy._draw(hover=False)
-        self.after(1200, self._restore)
+        self._copy.set_text("Copied")
+        # Held so a future change could cancel it; the real guard is
+        # _restore checking winfo_exists() below, since the window can close
+        # inside this 1.2s window on the finished screen.
+        self._restore_id = self.after(1200, self._restore)
 
     def _restore(self) -> None:
-        self._copy._text = "Copy"
-        self._copy._draw(hover=False)
+        if not self.winfo_exists():
+            return
+        self._copy.set_text("Copy")
