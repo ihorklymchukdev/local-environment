@@ -381,11 +381,27 @@ def selfcheck():
     # The setup window is five modules PyInstaller can only find through the
     # spec's hiddenimports. A bundle missing one launches, shows a Dock icon
     # and dies on the first draw -- which is exactly what this command exists
-    # to catch before a user does.
+    # to catch before a user does. Reported the same way as the asset checks
+    # above (an OK/MISSING line per item) rather than as an uncaught
+    # traceback, so the two failure classes this command guards against read
+    # the same way. Caught as ImportError, not the narrower
+    # ModuleNotFoundError: `app` does `from . import status`, so a missing
+    # `status` fails `app`'s own import too, but as a plain ImportError
+    # ("cannot import name 'status'"), not a ModuleNotFoundError -- both mean
+    # "not found in this bundle". A real bug inside one of these modules
+    # (a RuntimeError, an AttributeError, anything raised by the module's own
+    # code rather than by the import machinery) is a different failure and
+    # still surfaces as a full traceback, not as MISSING.
     import importlib
     for name in ("theme", "widgets", "wizard", "status", "app"):
-        importlib.import_module(f"host.setup_app.{name}")
-    typer.echo("✓ setup window modules import")
+        label = f"host.setup_app.{name}"
+        try:
+            importlib.import_module(label)
+        except ImportError as e:
+            all_ok = False
+            typer.echo(f"{'MISSING':<7} {label} -> {e}")
+        else:
+            typer.echo(f"{'OK':<7} {label}")
 
     raise typer.Exit(code=0 if all_ok else 1)
 

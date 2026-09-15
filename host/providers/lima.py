@@ -1,8 +1,18 @@
 from __future__ import annotations
 
-# UNVERIFIED: written for parity against the VmProvider contract; not run on
-# macOS in this session. Command construction is unit-tested; live behavior
-# (vz, rosetta, port forwarding) must be confirmed on an Apple Silicon host.
+# CONFIRMED ONCE, then still mostly UNVERIFIED. On 2026-09-15, on macOS
+# 26.6.2 (build 25G83) arm64 with Lima 2.2.0, a VM created from this
+# provider's `create()` against the pre-33571da revision of omelet.yaml
+# booted under `vz`, ran the full engine bootstrap, and answered both
+# declared portForwards (39080, 39099) -- confirmed after the fact, not by a
+# controlled session anyone recorded as it happened. See
+# docs/lima-verification-report.md for the command trail.
+# Still unrun anywhere: `forward()`/`forwards()` and the ssh control master
+# they assume, `stop()`/`destroy()`, the uninstall path, whether
+# omelet.yaml's `ssh.localPort` is honoured by Lima at all (the one VM
+# inspected predates that field), the x86_64 image, and whether Rosetta is
+# functional inside the guest -- `rosetta.enabled: true` only proved not to
+# block boot.
 
 import os
 import platform
@@ -15,9 +25,18 @@ from ..core.provider import Access, AccessField, Completed, Diagnosis, CheckResu
 
 LOOPBACK = "127.0.0.1"
 
-# Declared in omelet.yaml's `ssh.localPort`, and what the screen shows before
-# the VM has ever been started and written its own ssh.config.
+# The value omelet.yaml's `ssh.localPort` requests -- not confirmed as what
+# Lima actually binds. Not shown to the user for that reason (see
+# _PORT_UNCONFIRMED below): the one VM this project has inspected predates
+# the field, so whether Lima honours it is still an open question in
+# docs/lima-verification-report.md. Kept here only as the value asked for.
 DECLARED_SSH_PORT = "39022"
+
+# What the screen shows for Port before Lima has written its own ssh.config
+# -- deliberately not DECLARED_SSH_PORT. Showing that number here would read
+# as a live value a user could `ssh -p` with, and it may not even be the
+# port Lima picks (the inspected VM ended up on a different one).
+_PORT_UNCONFIRMED = "assigned when the virtual machine is created"
 
 _SSH_KEYS = {"hostname": "Host", "port": "Port", "user": "User",
              "identityfile": "Identity file"}
@@ -42,17 +61,22 @@ def parse_ssh_config(text: str) -> dict[str, str]:
     return found
 
 
-# Port (and, by construction, Host -- portForwards always binds it to
-# LOOPBACK) is a value Omelet itself hands Lima, in omelet.yaml's
-# `ssh.localPort`. User and Identity file are never configured anywhere: they
-# are guesses at Lima's usual behaviour for a fresh guest account
-# (`getpass.getuser()`, `_config/user`), and a host username Lima sanitizes
-# when provisioning the guest (spaces, uppercase, unicode) makes the guess
-# wrong. The fallback note below must say which kind of default each missing
-# field is, not lump them together as "the values Omelet asks Lima for".
-_CONFIGURED_LABELS = ("Host", "Port")
+# Host is a fact this project's own code guarantees, by construction --
+# portForwards always binds it to LOOPBACK, and that much needs no VM to
+# check. Port is different: Omelet requests it via omelet.yaml's
+# `ssh.localPort`, but no run of this project has ever confirmed Lima honours
+# that field rather than picking its own free port -- the one VM inspected so
+# far predates the field entirely (see docs/lima-verification-report.md).
+# User and Identity file are never configured anywhere: they are guesses at
+# Lima's usual behaviour for a fresh guest account (`getpass.getuser()`,
+# `_config/user`), and a host username Lima sanitizes when provisioning the
+# guest (spaces, uppercase, unicode) makes the guess wrong. The fallback note
+# below must say which kind of default each missing field is, not lump them
+# together as "the values Omelet asks Lima for".
+_CONFIGURED_LABELS = ("Host",)
+_REQUESTED_LABELS = ("Port",)
 _GUESSED_LABELS = ("User", "Identity file")
-_ALL_LABELS = _CONFIGURED_LABELS + _GUESSED_LABELS
+_ALL_LABELS = _CONFIGURED_LABELS + _REQUESTED_LABELS + _GUESSED_LABELS
 
 
 def _join_and(labels: list[str]) -> str:
@@ -74,19 +98,23 @@ def _fallback_note(missing: list[str], *, config_exists: bool) -> str:
     if not missing:
         return ""
     configured = [label for label in _CONFIGURED_LABELS if label in missing]
+    requested = [label for label in _REQUESTED_LABELS if label in missing]
     guessed = [label for label in _GUESSED_LABELS if label in missing]
     clauses = []
     if configured:
         verb = "is" if len(configured) == 1 else "are"
         clauses.append(f"{_join_and(configured)} {verb} what Omelet asks Lima for")
+    if requested:
+        verb = "is" if len(requested) == 1 else "are"
+        clauses.append(f"{_join_and(requested)} {verb} requested in omelet.yaml "
+                       "but not confirmed until Lima writes its own ssh.config")
     if guessed:
         verb = "is" if len(guessed) == 1 else "are"
         clauses.append(f"{_join_and(guessed)} {verb} Lima's own usual default "
                        "and may not match once the virtual machine exists")
     lead = ("The virtual machine has not been started yet" if not config_exists
             else "Lima has not written all of its connection details yet")
-    return (f"{lead}, so " + ", but ".join(clauses)
-           + ". Run setup, then open this window again.")
+    return f"{lead}, so " + "; ".join(clauses) + ". Run setup, then open this window again."
 
 
 # Homebrew installs limactl here and puts neither prefix on the PATH an app
@@ -304,7 +332,7 @@ class LimaProvider:
         import getpass
         fields = (
             AccessField("Host", found.get("Host", LOOPBACK)),
-            AccessField("Port", found.get("Port", DECLARED_SSH_PORT)),
+            AccessField("Port", found.get("Port", _PORT_UNCONFIRMED)),
             AccessField("User", found.get("User", getpass.getuser())),
             AccessField("Identity file", found.get(
                 "Identity file", str(self.lima_home / "_config" / "user"))),

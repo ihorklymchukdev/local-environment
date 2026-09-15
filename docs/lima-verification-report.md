@@ -1,12 +1,38 @@
-# Lima / macOS verification — still BLOCKED on the VM
+# Lima / macOS verification — confirmed once, mostly still unverified
 
-**Status: the VM has never been created.** `LimaProvider.create/start/stop/destroy/
-exec/forward` and every line of `host/providers/omelet.yaml` remain unexecuted, and
-**the UNVERIFIED banners in both files stay until this page records a real VM.**
+**Status: a VM created from this project's own config has run, once, and was
+found rather than made under a controlled session.** On 2026-09-15, on macOS
+26.6.2 (build 25G83) arm64 with Lima 2.2.0, a VM named `omelet-vm` was created
+from the pre-`33571da` revision of `host/providers/omelet.yaml` (`create()`'s
+own `limactl start --name=omelet-vm --tty=false <config>` invocation), booted
+under `vz`, ran the full engine bootstrap to `engine-v0.0.1`, and answered
+both declared `portForwards` — `curl 127.0.0.1:39099/health` returns 200 with
+`docker.reachable: true`. `~/.lima/omelet-vm/ssh.config` exists at exactly the
+path `forward()` and `access()` assume. This was established by inspecting
+the VM after the fact (`limactl list`, `limactl shell omelet-vm cat
+/opt/omelet/engine.version`, reading `ssh.config` directly) on 2026-09-15,
+roughly six hours after the VM's creation — **nobody ran this as a recorded,
+controlled session**, so treat it as real evidence of what the code path can
+do, not as a rehearsed, repeatable install.
+
+**Still unproven, and what a next session should target:** `forward()`
+tunnelling a *distinct* port through the ssh control master (only the two
+`portForwards` declared in `omelet.yaml` have been exercised); `forwards()`
+listing anything; `stop()`/`destroy()` and the uninstall path; whether Lima
+honours `omelet.yaml`'s `ssh.localPort` at all — the VM found predates that
+field, so this is untested, not disproven; the `x86_64` image, added after
+this VM was created; and whether `rosetta.enabled: true` is functional inside
+the guest, as opposed to merely not preventing boot (all that this VM proves).
+**The UNVERIFIED banners in `host/providers/lima.py` and
+`host/providers/omelet.yaml` stay** — rewritten to say what is and is not
+confirmed, not removed — because one arm64 machine, one now-superseded config
+revision, and half the provider surface are not the whole contract.
 
 What has now run on a real Apple Silicon Mac is recorded under
 "2026-09-15" below — steps 1 and 2 of `lima-spike-checklist.md`, and nothing past
-them. Everything in the next section is still the run that has to happen.
+them, plus the `install_runtime` and after-the-fact-inspection sections that
+follow. A repeatable, recorded run of `create_vm` through to `verify` is still
+the session this page is waiting for.
 
 ## 2026-09-15 — steps 1 and 2, on macOS 26.6.2 (build 25G83), arm64
 
@@ -77,12 +103,71 @@ it still sets `rosetta.enabled: true`. Rosetta is an arm64-only feature.
 Nobody has run an Intel build, so this is an open question for that run, not a
 defect or a fix.
 
-**Everything else is unchanged.** No VM has been created by this work.
-`create_vm` is still the first unproven step, and `vz`, Rosetta, the port
-forwards and the ssh control master are all still assumptions. **The
-UNVERIFIED banners in `host/providers/lima.py` and `host/providers/omelet.yaml`
-stay.** `forwards()` still returns an empty list on Lima; that open question is
-not touched by this work.
+**No VM has been created by this work** — `install_runtime` only fetches and
+verifies `limactl` itself. That is correctly scoped to this section. What is
+**not** correctly scoped, and is fixed below rather than here: `create_vm`
+is not "the first unproven step" project-wide — see the next section, which
+records a VM that was found already running this exact config, created
+before this work began. `forwards()` still returns an empty list on Lima;
+that open question is not touched by this work.
+
+## 2026-09-15 — the pre-existing `omelet-vm`, inspected after the fact
+
+While doing the `install_runtime` run above, `~/.lima/omelet-vm` was found
+already on this machine, `limactl list` showing it `Running`. It was
+inspected read-only — no `create`, `start`, `stop` or `destroy` call was made
+against it — and the results are the "confirmed once" claims in the Status
+section above. The commands and their output:
+
+```
+$ diff <(cat ~/.lima/omelet-vm/lima.yaml) <(git show 3560692:host/providers/omelet.yaml)
+(no output -- byte-identical, banner and portForwards comments included)
+
+$ limactl list
+NAME         STATUS     SSH                VMTYPE    ARCH       CPUS    MEMORY    DISK     DIR
+omelet-vm    Running    127.0.0.1:50998    vz        aarch64    4       4GiB      60GiB    ~/.lima/omelet-vm
+
+$ limactl shell omelet-vm cat /opt/omelet/engine.version
+engine-v0.0.1
+
+$ curl 127.0.0.1:39099/health
+{"...", "docker": {"reachable": true, ...}}
+```
+
+`/opt/omelet` inside the guest holds `agent.token`, `stack.yml`, `state.db`
+and a populated `projects/` — the full engine install ran, not just a boot.
+`~/.lima/omelet-vm/ssh.config` exists with a quoted `IdentityFile` and `Port
+50998` (the live ssh port Lima picked — not `39022`, the value
+`omelet.yaml`'s now-unexecuted `ssh.localPort` requests; see the port finding
+below). The `lima.yaml` on disk is byte-identical to `git show
+3560692:host/providers/omelet.yaml`, which predates both the `x86_64` image
+and the `ssh:` block — this VM was created by exactly `LimaProvider.create()`
+against that revision, most likely by a human running this project's own
+setup or `limactl` by hand, not by any automated test.
+
+**Correcting a misreading in an earlier draft of this page:**
+`~/.local/share/omelet/install-state.json` on this machine shows
+`{"completed": ["preflight"]}`, and an earlier version of this section took
+that to mean the VM's creation was unaccounted for by `omelet setup`'s own
+tracked steps. That
+reading is backwards. `host/core/install.py` never persists an `always_run`
+step into `install-state.json`, and `preflight` is the only step in
+`default_steps` without that flag — so `{"completed": ["preflight"]}` is
+**exactly the state a fully successful `omelet setup --headless` run leaves
+behind**, not evidence that setup stalled after `preflight`. Timeline: this
+VM was created at 10:37 and the engine install finished around 13:10, about
+six hours before this correction was written — consistent with one ordinary,
+successful `omelet setup` run, not a hand-run `limactl start` bypassing it.
+
+**One thing this VM cannot answer, and does not disprove:** whether Lima
+honours `omelet.yaml`'s `ssh.localPort`. Its `lima.yaml` predates that field
+entirely (it was added in `33571da`, after this VM was created), and Lima
+stores the config it was started with verbatim — so the live SSH port being
+50998 rather than 39022 proves only that the field was never passed, not that
+Lima would ignore it if it were. Untested, not disproven.
+
+**Do not delete this VM.** It is the only live macOS evidence this project
+has, and `/opt/omelet/projects` may hold real project state.
 
 ## What Phase 2 changed on the Lima side, unverified
 

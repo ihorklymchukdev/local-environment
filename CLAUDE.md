@@ -6,11 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A PoC CLI (`omelet`) that creates a managed Linux VM, installs Docker inside it, runs any
 `docker-compose` project in the guest, and hands back a working URL on the host.
-Windows/WSL2 is the primary platform; macOS/Lima exists for parity and is **unverified below the
-installer** (`host/providers/lima.py`, `host/providers/omelet.yaml` — both carry an UNVERIFIED
-banner; no Lima VM has ever been created). Both platforms have a packaged installer, and on macOS
-`omelet setup` is known to run as far as its first check — `docs/lima-verification-report.md`
-records exactly what has and has not run there.
+Windows/WSL2 is the primary platform; macOS/Lima exists for parity and is **confirmed once, still
+mostly unverified below the installer** (`host/providers/lima.py`, `host/providers/omelet.yaml` —
+both carry a banner saying exactly what is and is not confirmed). A VM created from this project's
+own config has booted under `vz` on an Apple Silicon Mac, run the full engine install, and answered
+both declared port forwards — found and inspected after the fact, not produced by a recorded,
+repeatable session; a controlled run of `create_vm` through `verify` is still the gap. Both
+platforms have a packaged installer, and on macOS `omelet setup` installs Lima itself and has
+completed a full install once, on one machine — `docs/lima-verification-report.md` records exactly
+what has and has not run there.
 
 `task.md` and `docs/superpowers/plans/2026-08-14-local-runtime-poc.md` hold the original blueprint
 and task plan; `.superpowers/sdd/` holds the per-task execution ledger.

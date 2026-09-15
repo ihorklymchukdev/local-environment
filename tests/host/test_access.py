@@ -65,14 +65,18 @@ def test_lima_hands_over_a_command_that_needs_no_ssh_config_of_the_users(tmp_pat
         f"ssh -F {tmp_path / '.lima' / 'omelet-vm' / 'ssh.config'} lima-omelet-vm")
 
 
-def test_lima_falls_back_to_the_declared_port_before_the_first_boot(tmp_path):
+def test_lima_shows_the_port_as_unconfirmed_before_the_first_boot(tmp_path):
     # ssh.config is written when the VM is created. Showing nothing until then
-    # would make the screen useless exactly when a user is most lost.
+    # would make the screen useless exactly when a user is most lost -- but
+    # showing the omelet.yaml-declared port as if it were live would be worse:
+    # Lima has never been confirmed to honour ssh.localPort, and the one VM
+    # this project has inspected ended up on a different port entirely.
     access = _provider(tmp_path, written=False).access()
-    assert _fields(access)["Port"] == "39022"
+    assert _fields(access)["Port"] == "assigned when the virtual machine is created"
     assert _fields(access)["Host"] == "127.0.0.1"
     assert access.note, "the screen must say these are defaults, not live values"
-    assert "Host and Port" in access.note
+    assert "Host is what Omelet asks Lima for" in access.note
+    assert "Port is requested in omelet.yaml but not confirmed" in access.note
     assert "User and Identity file" in access.note
 
 

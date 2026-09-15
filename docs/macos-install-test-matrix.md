@@ -5,10 +5,14 @@ The release gate for `dist/OmeletSetup-<version>.pkg`, built by
 and the verbatim output for every run; do not mark a case passed without it.
 
 **The rows below are not independent of the Lima question.** Cases 1–3 are about
-the package, and are answerable today. Cases 4–8 all run through
-`LimaProvider`, which has never created a VM — see
-`docs/lima-verification-report.md`. A failure there is a provider finding, not a
-packaging one, and it belongs in that report.
+the package, and are answerable today. Cases 5–8 run through `LimaProvider`
+end to end, which has been confirmed once — after the fact, not as a
+recorded session — but is still mostly unverified; see
+`docs/lima-verification-report.md`. Case 4 as rewritten below deliberately
+does **not** run through `LimaProvider`: it calls `lima_install.install()`
+directly, precisely to avoid touching `create_vm` against the VM that report
+now documents. A failure in cases 5–8 is a provider finding, not a packaging
+one, and it belongs in that report.
 
 | # | Case | What it proves | Pass condition | Date | Build | Outcome |
 |---|---|---|---|---|---|---|
@@ -44,7 +48,8 @@ packaging one, and it belongs in that report.
   the postinstall script runs as root, so a VM built there would belong to a
   user who cannot see it. Case 3 is the affordance that replaces it.
 - **Case 7 is destructive** — it deletes the VM and every project in it. Only
-  run it where that is disposable.
+  run it where that is disposable, and see the bullet below before running it
+  on this machine specifically.
 - **The `codesign --deep` hazard for a bundled `limactl` no longer applies.**
   `build.sh`'s signing comment still describes it — re-signing every Mach-O in
   the bundle would strip `com.apple.security.virtualization` from a `limactl`
@@ -54,16 +59,20 @@ packaging one, and it belongs in that report.
   `--deep` to touch. The paragraph stays in `build.sh` because it is the reason
   bundling was rejected in favor of fetching; deleting it would let a future
   reader re-propose bundling without knowing why that failed before.
-- **This machine already has a Lima VM named `omelet-vm`**, `Running`, `vz`,
-  `aarch64`, predating this task and case 4's run above.
-  `~/.local/share/omelet/install-state.json` on it shows only
-  `{"completed": ["preflight"]}`,
-  which does not account for a running VM — whatever created it did not go
-  through `omelet setup`'s tracked steps, and there is no verbatim command log
-  for it. Case 4 above was run by calling the installer function directly for
-  exactly this reason, so as not to run `create_vm` against a machine that
-  already has a VM of that name. Its existence is not recorded as a pass
-  anywhere in this matrix or in `docs/lima-verification-report.md`: this
-  table's own rule — don't mark a case passed without the verbatim output —
-  applies to it too, and there is none to record. Investigate separately
-  before relying on it as evidence of anything.
+- **This machine has a Lima VM named `omelet-vm`, and it is real evidence, not
+  disposable leftover state — do not delete it.** `Running`, `vz`, `aarch64`,
+  its `lima.yaml` byte-identical to a real revision of
+  `host/providers/omelet.yaml`, engine installed to `engine-v0.0.1`, and
+  `/opt/omelet/projects` populated. `~/.local/share/omelet/install-state.json`
+  on this machine shows `{"completed": ["preflight"]}` — an earlier draft of
+  this bullet read that as evidence the VM bypassed `omelet setup`'s tracked
+  steps. That reading was backwards: `install-state.json` never records an
+  `always_run` step, and `preflight` is the only step without that flag, so
+  `{"completed": ["preflight"]}` is exactly what a **successful** setup run
+  leaves behind, not an interrupted one. Full details and the command trail
+  are in `docs/lima-verification-report.md`. Case 4 above still calls the
+  installer function directly rather than running `omelet setup --headless`
+  end to end, so as not to run `create_vm` a second time against a VM of the
+  same name — that reasoning holds regardless of how this VM is read. **Case 7
+  in this table deletes a VM named `omelet-vm` by design; do not run it on
+  this machine.**
