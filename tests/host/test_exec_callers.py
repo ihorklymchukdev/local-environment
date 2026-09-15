@@ -37,7 +37,7 @@ def _exec_callers(tree, rel: str):
                 yield rel, node.name, child.lineno
 
 
-def test_exec_is_only_used_for_bootstrap_and_the_token():
+def test_exec_is_only_used_for_bootstrap_the_token_and_the_readiness_probe():
     offenders = []
     found = []
     scanned = [py for py in sorted(HOST.rglob("*.py")) if "providers" not in py.parts]
@@ -49,9 +49,10 @@ def test_exec_is_only_used_for_bootstrap_and_the_token():
             if (rel, func) not in ALLOWED_CALLERS:
                 offenders.append(f"{rel}:{lineno} in {func}()")
     assert not offenders, (
-        "provider.exec() was called outside bootstrap and the token read: "
-        f"{offenders}. Shelling into the guest to do project work is what the "
-        "agent's HTTP API replaced -- add a route there instead.")
+        "provider.exec() was called outside bootstrap, the token read and the "
+        f"readiness probe: {offenders}. Shelling into the guest to do project "
+        "work is what the agent's HTTP API replaced -- add a route there "
+        "instead.")
     # Guards against the allowlist outliving the code it describes.
     assert set(found) == ALLOWED_CALLERS, (
         f"ALLOWED_CALLERS no longer matches the tree: found {sorted(set(found))}")

@@ -45,26 +45,47 @@ def probe(provider, *, client_factory=None) -> Readiness:
     "is it running": reaching the guest is the fact that matters, both
     platforms answer it identically, and the Protocol already offers `exec`.
 
-    Wrapped in one broad `except`: a provider that throws (a missing
-    `limactl`, say) must come back as a fact in `problem`, not as a crash in
-    the caller that hasn't drawn anything yet.
+    Each stage has its own `try`, rather than one wrapping the whole function:
+    a provider that throws (a missing `limactl`, say) must come back as a fact
+    in `problem`, not as a crash in the caller that hasn't drawn anything yet
+    -- but it must also keep every fact already established. A single
+    catch-all around the whole body would reset a `vm_exists=True` learned two
+    lines earlier back to unknown, which is a wart in exactly the module whose
+    entire job is reporting what it managed to establish.
     """
     client_factory = client_factory or _default_client_factory
+
     try:
-        if not provider.exists():
-            return Readiness()
-        if not provider.exec(["true"]).ok:
-            return Readiness(vm_exists=True)
-        marker = provider.exec(["cat", constants.ENGINE_MARKER])
-        engine = marker.stdout.strip() if marker.ok else ""
-        if not engine:
-            return Readiness(vm_exists=True, vm_reachable=True)
-        try:
-            api = client_factory(provider).health().get("api", 1)
-        except Exception as e:
-            return Readiness(vm_exists=True, vm_reachable=True,
-                              engine_version=engine, problem=f"{e}")
-        return Readiness(vm_exists=True, vm_reachable=True,
-                          engine_version=engine, agent_api=api)
+        exists = provider.exists()
     except Exception as e:
         return Readiness(problem=f"{e}")
+    if not exists:
+        return Readiness()
+
+    try:
+        reachable = provider.exec(["true"]).ok
+    except Exception as e:
+        return Readiness(vm_exists=True, problem=f"{e}")
+    if not reachable:
+        return Readiness(vm_exists=True)
+
+    try:
+        marker = provider.exec(["cat", constants.ENGINE_MARKER])
+        engine = marker.stdout.strip() if marker.ok else ""
+    except Exception as e:
+        return Readiness(vm_exists=True, vm_reachable=True, problem=f"{e}")
+    if not engine:
+        return Readiness(vm_exists=True, vm_reachable=True)
+
+    # Constructing the client and asking it for /health are one stage: both
+    # can throw (a refused connection, a client_factory that never dials
+    # anything), and `.health()` is not guaranteed to hand back a dict --
+    # `.get` on a `None` or a list raises too, and belongs here rather than
+    # crashing the caller.
+    try:
+        api = client_factory(provider).health().get("api", 1)
+    except Exception as e:
+        return Readiness(vm_exists=True, vm_reachable=True,
+                          engine_version=engine, problem=f"{e}")
+    return Readiness(vm_exists=True, vm_reachable=True,
+                      engine_version=engine, agent_api=api)
