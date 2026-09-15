@@ -109,22 +109,16 @@ def install(root: Path, *, fetch=_fetch, runner=_default_runner,
                 "the Lima download did not contain bin/limactl")
         staged_binary.chmod(0o755)
         (staging / ".version").write_text(LIMA_VERSION + "\n")
-        previous = _swap(staging, target)
+        # Verified here, in staging, and not after the swap: a process killed
+        # mid-check between "moved into place" and "confirmed to run" would
+        # leave the real path holding an unverified binary -- a swap the user
+        # cannot see coming and this function cannot undo once it has
+        # happened. Verifying first means a failed check has moved nothing,
+        # so there is nothing to roll back.
+        _require_version(staged_binary, runner)
+        _swap(staging, target)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
-
-    # Verified at its landing spot, not in staging: limactl resolves
-    # share/lima relative to its own path, so a staging-directory run proves
-    # nothing about whether the binary works from where callers will find it.
-    try:
-        _require_version(binary, runner)
-    except LimaInstallError:
-        shutil.rmtree(target, ignore_errors=True)
-        if previous is not None:
-            os.replace(previous, target)
-        raise
-    if previous is not None:
-        shutil.rmtree(previous, ignore_errors=True)
     return binary
 
 
@@ -156,24 +150,24 @@ def _require_version(binary: Path, runner) -> None:
             f"not version {LIMA_VERSION}")
 
 
-def _swap(staging: Path, target: Path) -> Path | None:
-    """Move the staged tree into place, keeping the old one on the side.
+def _swap(staging: Path, target: Path) -> None:
+    """Move the verified tree into place, keeping the old one until the last
+    moment: a half-installed Lima is worse than the previous version.
 
-    Returns the path the previous install was parked at (or None if there
-    wasn't one), so the caller can restore it if the new tree fails its
-    version check, and delete it once that check passes. A half-installed
-    Lima is worse than the previous version, so nothing here deletes the old
-    tree until the new one has proven it runs.
+    The tree moved in here has already passed `_require_version` in staging,
+    so there is nothing left to roll back if this fails partway -- the
+    `previous` side-step exists only so a failed `os.replace(staging, target)`
+    (a cross-device move, say) can put the old tree back rather than leave
+    neither.
     """
     previous = target.with_name(target.name + ".previous")
     shutil.rmtree(previous, ignore_errors=True)
-    had_previous = target.exists()
-    if had_previous:
+    if target.exists():
         os.replace(target, previous)
     try:
         os.replace(staging, target)
     except OSError:
-        if had_previous:
+        if previous.exists():
             os.replace(previous, target)
         raise
-    return previous if had_previous else None
+    shutil.rmtree(previous, ignore_errors=True)

@@ -109,10 +109,36 @@ def test_install_unpacks_the_archive_and_returns_the_binary(tmp_path):
     assert path.parent.parent == tmp_path / "lima"
 
 
-def test_install_verifies_the_binary_by_running_it(tmp_path):
+def test_install_verifies_the_binary_before_moving_it_into_place(tmp_path):
     runner = FakeRunner()
     lima_install.install(tmp_path, fetch=_fetcher(_good_tarball), runner=runner)
-    assert runner.calls == [[str(tmp_path / "lima" / "bin" / "limactl"), "--version"]]
+    assert len(runner.calls) == 1
+    argv = runner.calls[0]
+    assert argv[1] == "--version"
+    assert argv[0].endswith("bin/limactl")
+    assert argv[0] != str(tmp_path / "lima" / "bin" / "limactl"), (
+        "the binary must be verified in its staging directory: a swap-then-verify "
+        "leaves a broken limactl in place if the process dies mid-check")
+
+
+def test_a_bad_download_never_disturbs_a_working_install(tmp_path):
+    lima_install.install(tmp_path, fetch=_fetcher(_good_tarball), runner=FakeRunner())
+    final = tmp_path / "lima" / "bin" / "limactl"
+    final.write_text("#!/bin/sh\n# the good one\n")
+    (tmp_path / "lima" / ".version").write_text("1.0.0")
+
+    seen = {}
+
+    class Watching(FakeRunner):
+        def __call__(self, argv):
+            seen["intact"] = "# the good one" in final.read_text()
+            return super().__call__(argv)
+
+    with pytest.raises(lima_install.LimaInstallError):
+        lima_install.install(tmp_path, fetch=_fetcher(_good_tarball),
+                             runner=Watching(stdout=b"limactl version 1.0.0\n"))
+    assert seen["intact"], "the working install was disturbed before the new one was verified"
+    assert "# the good one" in final.read_text()
 
 
 def test_install_fails_when_the_unpacked_binary_reports_another_version(tmp_path):
