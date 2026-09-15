@@ -47,6 +47,9 @@ services:
     depends_on:
       - db
     profiles: ["tools"]
+volumes:
+  wp_html:
+  db_data:
 ```
 `./wp-content` is the source you edit (a child theme, a plugin). Core lives in `wp_html`.
 

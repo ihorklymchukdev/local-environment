@@ -60,8 +60,9 @@ web:
 
 ## First run
 ```bash
-docker compose run --rm -v $PWD:/app -w /app composer:2 create-project laravel/laravel .
-docker compose run --rm -v $PWD:/app -w /app composer:2 require filament/filament:"^3.0"
+# composer is not a service in the compose file: plain `docker run` with the project mounted
+docker run --rm -v "$PWD":/app -w /app composer:2 create-project laravel/laravel .
+docker run --rm -v "$PWD":/app -w /app composer:2 require filament/filament:"^3.0"
 docker compose run --rm app php artisan filament:install --panels --no-interaction
 docker compose run --rm app php artisan migrate
 docker compose run --rm app php artisan make:filament-user   # answers on the command line
@@ -70,7 +71,7 @@ Set `APP_URL` in `.env` to the URL `omelet up` printed. `.gitignore` comes with 
 
 ## Existing project
 Keep the project's `composer.json` and `.env.example`; copy `.env.example` to `.env`, run
-`composer install` through the `composer:2` image, `php artisan key:generate`, `migrate`.
+`docker run --rm -v "$PWD":/app -w /app composer:2 install`, `php artisan key:generate`, `migrate`.
 
 ## Gotchas
 - `artisan serve` is a dev server; that is what we want here. Do not add nginx + php-fpm

@@ -19,6 +19,10 @@ Products, shipping, taxes and payment keys are entered by the owner in
 `<URL>/wp-admin/admin.php?page=wc-admin`; walk them through it in plain words rather than
 inserting products yourself unless they hand you a list.
 
+## Existing project
+As `wordpress.md`: mount the repository's `wp-content/`. WooCommerce and its settings live in
+the database, so an imported shop also needs its database dump restored through `db`.
+
 ## Gotchas
 - Stripe test keys go in through the WooCommerce settings screen, never in files. Card data
   never touches the project.

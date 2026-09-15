@@ -55,7 +55,7 @@ calls changes incompatibly — that one needs a host release.
 ```bash
 pip install -e ".[dev]"
 
-python3 -m pytest -q                                    # full suite (434 tests, ~7s)
+python3 -m pytest -q                                    # full suite (441 tests, ~7s)
 python3 -m pytest tests/agent/test_project.py -q        # one file
 python3 -m pytest -k classify -q                        # one test by name
 ```

@@ -33,6 +33,10 @@ web:
 3. `bin/setup <URL from omelet up>` from the set; then `bin/magento admin:user:create …` and
    write the admin address and login down for the owner.
 
+## Existing project
+An imported Magento tree is the `src/` of the set above; keep its `composer.json` and
+`app/etc/env.php`, restore the database dump, then `bin/magento setup:upgrade`.
+
 ## Gotchas
 - The `wsl.exe`-side memory cap decides whether this runs at all; if the VM has under 4 GB,
   say so to the owner before starting rather than after a failed install.
