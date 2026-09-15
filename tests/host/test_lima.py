@@ -174,6 +174,26 @@ def test_preflight_refuses_a_mac_too_old_for_the_virtualization_framework():
     assert provider.preflight().dead_ends
 
 
+def test_preflight_parses_mac_ver_the_same_way_on_every_named_case():
+    cases = [
+        # platform.mac_ver() returns "" off macOS; get_provider() only hands
+        # out this provider on darwin, so a version we cannot read is our
+        # ignorance, not evidence the Mac is too old.
+        ("", True),
+        # The SYSTEM_VERSION_COMPAT sentinel every unmanifested process sees
+        # -- the true OS can be anything from Big Sur up, so this is
+        # unparseable too, not a real major version 10.
+        ("10.16", True),
+        ("13", True),
+        ("26.6.2", True),
+        ("12.7", False),
+    ]
+    for release, expect_ok in cases:
+        provider = LimaProvider(name="omelet-vm", runner=FakeRunner(),
+                                mac_ver=_mac(release))
+        assert provider.preflight().ok is expect_ok, release
+
+
 def test_doctor_still_reports_a_missing_lima_and_names_setup_as_the_fix():
     provider = LimaProvider(name="omelet-vm", limactl="/nowhere/limactl",
                             runner=FakeRunner(), data_root=Path("/nowhere"),
@@ -201,6 +221,28 @@ def test_runtime_installs_into_the_providers_data_root(tmp_path, monkeypatch):
     emit = lambda done, total: None
     runtime.run(emit)
     assert seen == {"root": tmp_path, "on_progress": emit}
+
+
+def test_runtime_rebinds_limactl_to_the_path_the_install_produced(monkeypatch):
+    # find_limactl() ran before this download existed and resolved to the
+    # bare name -- an app launched by LaunchServices has no PATH Homebrew is
+    # on. Without the rebind, create_vm is the first thing to shell out to
+    # "limactl" and fails with FileNotFoundError, on every first run.
+    resolved = {}
+
+    def fake_install(root, *, on_progress=None):
+        resolved["on_progress"] = on_progress
+        return root / "lima" / "bin" / "limactl"
+
+    monkeypatch.setattr(lima_install, "install", fake_install)
+    data_root = Path("/wherever")
+    provider = LimaProvider(name="omelet-vm", limactl="limactl",
+                            runner=FakeRunner(), data_root=data_root)
+    emit = lambda done, total: None
+    result = provider.runtime().run(emit)
+    assert result is None, "the step's message must be text, never a Path"
+    assert provider.limactl == str(data_root / "lima" / "bin" / "limactl")
+    assert resolved["on_progress"] is emit
 
 
 def test_the_wsl2_provider_has_nothing_to_install():

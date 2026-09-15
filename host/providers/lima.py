@@ -117,12 +117,23 @@ class LimaProvider:
 
     def _os_checks(self):
         release = self._mac_ver()[0]
-        major = int(release.split(".")[0]) if release.split(".")[0].isdigit() else 0
+        head = release.split(".")[0]
+        # "10.16" is not a real release: it's what a process without a
+        # "supports macOS 11" manifest sees under SYSTEM_VERSION_COMPAT,
+        # whatever the true OS is (11 or newer) -- so it is treated as
+        # unparseable, like the "" platform.mac_ver() returns off macOS. A
+        # version we cannot read is our ignorance about this Mac, not
+        # evidence it is too old: get_provider() only returns this provider
+        # on darwin at all, and vz is the real gate, failing later with its
+        # own message if this machine truly cannot run it. Only a version
+        # that parses AND reads below 13 is a dead end.
+        parsed = int(head) if head.isdigit() and release != "10.16" else None
+        ok = parsed is None or parsed >= 13
         # vz, which omelet.yaml asks for, is macOS 13+. The .pkg refuses to
         # install below that; a source checkout has nothing stopping it.
         yield CheckResult(
-            f"macOS 13 or newer (found {release or 'unknown'})", major >= 13,
-            None if major >= 13 else
+            f"macOS 13 or newer (found {release or 'unknown'})", ok,
+            None if ok else
             "Omelet needs macOS 13 or newer; this Mac cannot run it")
 
     def exists(self) -> bool:
@@ -203,9 +214,15 @@ class LimaProvider:
         return Diagnosis(list(self._os_checks()))
 
     def runtime(self) -> Runtime | None:
-        return Runtime(f"Installing Lima {lima_install.LIMA_VERSION}",
-                       lambda emit: lima_install.install(self.data_root,
-                                                         on_progress=emit))
+        def install(emit) -> None:
+            # Rebind: on a clean Mac find_limactl() ran before this download
+            # existed and answered the bare name, which is on no PATH an app
+            # launched from Finder is given. Without this the very next step
+            # shells out to a limactl that is not there, and the failure
+            # arrives attributed to create_vm instead of here.
+            self.limactl = str(lima_install.install(self.data_root, on_progress=emit))
+
+        return Runtime(f"Installing Lima {lima_install.LIMA_VERSION}", install)
 
     def apply_remedy(self, remedy: str) -> None:
         raise ValueError(f"unknown remedy: {remedy}")

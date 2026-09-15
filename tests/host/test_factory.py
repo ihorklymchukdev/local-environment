@@ -18,10 +18,25 @@ def test_factory_returns_lima_on_macos(monkeypatch):
 def test_the_mac_provider_is_handed_a_resolved_limactl(monkeypatch):
     # The factory is where the host platform is resolved, so it is also where
     # "which limactl, given that this process may have no useful PATH" belongs.
+    # The stub records its kwargs rather than ignoring them: a find_limactl()
+    # call with no `managed` argument would keep this test green forever
+    # while the shipped app quietly stopped using the Lima setup installed.
+    from host.providers.lima import default_data_root
+    from host.providers.lima_install import managed_limactl
+
     monkeypatch.setattr(providers.sys, "platform", "darwin")
-    monkeypatch.setattr(providers, "find_limactl",
-                        lambda **kwargs: "/opt/homebrew/bin/limactl")
-    assert providers.get_provider().limactl == "/opt/homebrew/bin/limactl"
+    seen = {}
+
+    def fake_find_limactl(**kwargs):
+        seen.update(kwargs)
+        return "/opt/homebrew/bin/limactl"
+
+    monkeypatch.setattr(providers, "find_limactl", fake_find_limactl)
+    provider = providers.get_provider()
+    assert provider.limactl == "/opt/homebrew/bin/limactl"
+    root = default_data_root()
+    assert seen == {"managed": managed_limactl(root)}
+    assert provider.data_root == root
 
 
 def test_the_lima_data_root_is_the_parent_of_the_install_dir(monkeypatch):
