@@ -160,6 +160,25 @@ def test_an_incompatible_agent_is_named_as_a_version_problem():
     assert "version" in (headline + detail).lower()
 
 
+@pytest.mark.parametrize("readiness", [
+    Readiness(problem="disk full"),
+    Readiness(vm_exists=True, problem="ssh connection refused"),
+    Readiness(vm_exists=True, vm_reachable=True,
+              problem="permission denied reading engine.version"),
+    Readiness(vm_exists=True, vm_reachable=True, engine_version="0.1.0",
+              problem="connection refused"),
+], ids=["missing-vm", "unreachable-vm", "no-engine-version", "agent-not-answering"])
+def test_a_set_problem_survives_into_the_detail_on_every_non_ready_branch(readiness):
+    # Each non-ready branch has its own "append problem if set" line. A real
+    # error thrown while probing (host/core/status.py's probe() sets `problem`
+    # on any exception, at every stage) must never be silently swallowed into
+    # a generic "run setup again" -- that already happened once, in the
+    # `not engine_version` branch, which dropped it while its three siblings
+    # kept it.
+    _, detail = status.summarize(readiness)
+    assert readiness.problem in detail
+
+
 def test_diagnostics_carry_everything_someone_would_ask_for():
     text = status.diagnostics_text(READY, ACCESS, version="0.1.0",
                                    log=("bootstrap: done",))
@@ -168,9 +187,17 @@ def test_diagnostics_carry_everything_someone_would_ask_for():
         assert expected in text
 
 
-def test_diagnostics_never_carry_the_identity_file_contents_or_a_token():
+def test_diagnostics_never_open_a_file_and_carry_only_paths_not_contents(monkeypatch):
     # Paths are fine; secrets are not. This text is written to be pasted into
-    # a bug report by someone who will not read it first.
+    # a bug report by someone who will not read it first. "PRIVATE KEY" not in
+    # text only proves this one path's contents don't happen to leak today;
+    # monkeypatching open() to explode proves the stronger property -- that
+    # diagnostics_text is a pure pass-through of the strings it was already
+    # handed and could never read a path off disk even if that path existed.
+    def _no_reads(*args, **kwargs):
+        raise AssertionError("diagnostics_text must never open a file")
+    monkeypatch.setattr("builtins.open", _no_reads)
+
     access = Access(headline="x", summary="y", command="ssh …",
                     fields=(AccessField("Identity file", "/Users/you/.lima/_config/user"),))
     text = status.diagnostics_text(READY, access, version="0.1.0")

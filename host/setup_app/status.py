@@ -30,7 +30,8 @@ def summarize(readiness: Readiness) -> tuple[str, str]:
     if not readiness.engine_version:
         return ("Omelet is not installed in the virtual machine",
                 "The virtual machine is there, but nothing is installed inside "
-                "it yet. Run setup again.")
+                "it yet. Run setup again."
+                + (f"\n{readiness.problem}" if readiness.problem else ""))
     if readiness.agent_api not in constants.SUPPORTED_API:
         if readiness.agent_api is None:
             return ("The Omelet service is not answering",
