@@ -18,6 +18,24 @@ from . import status as status_screen
 from . import theme, widgets, wizard
 
 
+def _should_auto_start(readiness, state) -> bool:
+    """Whether a fresh launch should skip straight into the wizard.
+
+    True only on a machine where nothing has ever been recorded: that is the
+    one case a first-time user benefits from double-clicking once and getting
+    an install rather than a status screen saying "not set up yet" with a
+    button to press. Once anything has completed -- even if every attempt
+    since has died at `create_vm` -- the answer flips to False, because
+    "not readiness.vm_exists" stays true across every one of those failed
+    relaunches too (create_vm never got far enough to make the VM exist), and
+    without this check that would auto-start the wizard forever. A user in
+    that loop could reach the wizard's own Copy diagnostics (this branch
+    added it), but never the status screen, its Set up button, or a probe run
+    against the machine's actual current state.
+    """
+    return not readiness.vm_exists and not state.completed()
+
+
 def _log_with_notice(log: tuple[str, ...], message: str) -> tuple[str, ...]:
     """The finish step's closing sentence never reaches the wizard's own log
     box (`wizard.split_finish_message` strips it before `_append` so the row
@@ -79,9 +97,14 @@ def run_window(provider, steps_factory, state, *, resumed: bool = False) -> int:
         # themselves, and must not see "you don't need to do anything" about
         # a restart that happened, if at all, several runs ago. Only the one
         # call made before anything else runs may claim it.
-        screen = wizard.WizardScreen(root, palette, fonts, steps_factory(),
-                                     state, on_finished=wizard_finished,
-                                     resumed=first and resumed)
+        screen = wizard.WizardScreen(
+            root, palette, fonts, steps_factory(), state,
+            on_finished=wizard_finished, resumed=first and resumed,
+            on_close=close,
+            # A fresh, unforced probe -- never auto_setup -- so clicking this
+            # after a failure shows the machine's real current state rather
+            # than jumping straight back into another wizard run.
+            on_view_status=lambda: begin_probe(then=show_status))
         show(screen)
         screen.start()
 
@@ -110,7 +133,7 @@ def run_window(provider, steps_factory, state, *, resumed: bool = False) -> int:
                 readiness = results.get_nowait()
             except queue.Empty:
                 return root.after(100, wait)
-            if auto_setup and not readiness.vm_exists:
+            if auto_setup and _should_auto_start(readiness, state):
                 return start_wizard()
             then(readiness)
 

@@ -224,6 +224,7 @@ class FieldRow(tk.Frame):
     def __init__(self, parent, palette: theme.Palette, fonts, label: str, value: str):
         super().__init__(parent, bg=palette.bg)
         self._value = value
+        self._restore_id: str | None = None
         tk.Label(self, text=label, width=14, anchor="w", bg=palette.bg,
                  fg=palette.muted, font=fonts["small"]).pack(side="left")
         entry = tk.Entry(self, bg=palette.surface, fg=palette.text,
@@ -242,12 +243,21 @@ class FieldRow(tk.Frame):
         self.clipboard_clear()
         self.clipboard_append(self._value)
         self._copy.set_text("Copied")
-        # Held so a future change could cancel it; the real guard is
-        # _restore checking winfo_exists() below, since the window can close
-        # inside this 1.2s window on the finished screen.
         self._restore_id = self.after(1200, self._restore)
 
     def _restore(self) -> None:
         if not self.winfo_exists():
             return
         self._copy.set_text("Copy")
+
+    def destroy(self) -> None:
+        # Same bug _Spinner.destroy was written to fix: Misc.destroy only
+        # deletes the Tcl command behind this widget, it does not cancel a
+        # pending after() -- so a row destroyed inside the 1.2s Copy/Copied
+        # window (closing the status screen right after a click) fired
+        # _restore against a command that no longer existed, and the
+        # winfo_exists() guard in _restore could never run in time to stop it.
+        if self._restore_id is not None:
+            self.after_cancel(self._restore_id)
+            self._restore_id = None
+        super().destroy()

@@ -187,8 +187,8 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   `packaging/`, not just the platform you are on. The VM pulls the image and fetches the engine
   itself; only the `nginx-hello` smoke test and `omelet.yaml` ship with the host.
 - **The install step list is built from the provider, not from the platform.** Beyond the
-  `VmProvider` Protocol, `default_steps` reads seven members off whichever provider it was handed:
-  `image()`, `register_resume()`, `location`, `terminal`, `remediable`, `runtime()` and `access()`.
+  `VmProvider` Protocol, `default_steps` reads six members off whichever provider it was handed:
+  `image()`, `register_resume()`, `location`, `terminal`, `remediable` and `runtime()`.
   Three of them **remove steps**: `image()` returning None means the VM platform fetches its own
   guest image (Lima does, from `omelet.yaml`) and `fetch_image` disappears; `remediable = False`
   means the host OS has nothing to turn on and `remediate`/`reboot_gate` disappear with it;

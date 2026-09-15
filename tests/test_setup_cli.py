@@ -25,6 +25,7 @@ class StubProvider:
     def register_resume(self, exe): self.resumed_with = exe
     def exists(self): return True
     def create(self): pass
+    def start(self): pass
     def exec(self, argv, *, root=False): return Completed(0, "", "")
     def destroy(self): pass
     def image(self): return Image("http://example.invalid/img.wsl", "0" * 64)
@@ -101,6 +102,42 @@ def test_a_failure_offers_a_suggested_action(provisionable):
     assert "Traceback" not in result.stdout
 
 
+def test_headless_setup_uses_the_providers_label_and_prints_progress(monkeypatch):
+    # Two things `_emitter`'s whole-percent throttling still left invisible in
+    # a terminal: 391 lines for a 391 MB download (fixed by printing on a 10%
+    # boundary instead of every percent), and the provider's own step words --
+    # "Installing Lima 2.2.0" is Lima's sentence, not "install_runtime".
+    import host.core.bootstrap as bootstrap_mod
+    import host.core.install as install_mod
+    from host.core.provider import Runtime
+
+    class LimaLikeProvider(StubProvider):
+        remediable = False
+
+        def image(self):
+            return None
+
+        def runtime(self):
+            def run(emit):
+                for done in (10, 55, 100):
+                    emit(done, 100)
+            return Runtime("Installing Lima 2.2.0", run)
+
+    monkeypatch.setattr(cli, "_provider_factory", lambda: LimaLikeProvider())
+    monkeypatch.setattr(bootstrap_mod, "bootstrap", lambda provider, **kwargs: None)
+    monkeypatch.setattr(install_mod, "connect_step", lambda *a, **k: None)
+    monkeypatch.setattr(install_mod, "verify_step", lambda *a, **k: None)
+
+    result = runner.invoke(cli.app, ["setup", "--headless"])
+
+    assert result.exit_code == 0
+    assert "Installing Lima 2.2.0" in result.stdout
+    assert "install_runtime" not in result.stdout
+    percent_lines = [line for line in result.stdout.splitlines() if "%" in line]
+    assert percent_lines, "a long step must show some progress, not silence until it ends"
+    assert "100%" in result.stdout
+
+
 def test_uninstall_requires_purge_to_destroy_the_vm(monkeypatch):
     monkeypatch.setattr(cli, "_provider_factory", lambda: StubProvider())
     result = runner.invoke(cli.app, ["uninstall"])
@@ -142,6 +179,23 @@ def test_uninstall_purge_removes_the_vm_directory(monkeypatch):
     runner.invoke(cli.app, ["uninstall", "--purge"])
 
     assert not install_dir.exists(), "the VM directory must not survive a purge"
+
+
+def test_uninstall_purge_removes_the_managed_lima_install(monkeypatch):
+    # setup's install_runtime step puts the managed Lima under
+    # default_install_dir().parent / "lima" (lima_install.managed_root) --
+    # about 100 MB --purge never actually removed.
+    from host.providers import default_install_dir
+
+    monkeypatch.setattr(cli, "_provider_factory", lambda: FailingDestroyProvider())
+    root = default_install_dir().parent
+    lima_dir = root / "lima" / "bin"
+    lima_dir.mkdir(parents=True, exist_ok=True)
+    (lima_dir / "limactl").write_text("x")
+
+    runner.invoke(cli.app, ["uninstall", "--purge"])
+
+    assert not (root / "lima").exists(), "the managed Lima install must not survive a purge"
 
 
 def test_uninstall_purge_succeeds_and_clears_state(monkeypatch):

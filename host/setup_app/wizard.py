@@ -10,10 +10,13 @@ import time
 import tkinter as tk
 from dataclasses import dataclass, field
 
+from host.core import constants
 from host.core.install import (
     RESUME_NOTICE, DeadEnd, InstallError, Progress, RebootRequired, Step, run_install,
 )
+from host.core.status import Readiness
 
+from . import status as status_screen
 from . import theme, widgets
 
 # Steps the installer names itself. install_runtime is absent on purpose: its
@@ -25,7 +28,9 @@ LABELS = {
     "remediate": "Turning on Windows features",
     "reboot_gate": "Restart needed",
     "fetch_image": "Downloading Linux image",
-    "create_vm": "Creating the virtual machine",
+    # Covers both: an absent VM is created, an existing-but-stopped one is
+    # started (see host/core/install.py's _ensure_vm_running).
+    "create_vm": "Preparing the virtual machine",
     "bootstrap": "Installing Omelet",
     "connect": "Connecting to the Omelet service",
     "verify": "Testing the setup",
@@ -65,11 +70,18 @@ class Outcome:
 
 class WizardScreen(tk.Frame):
     def __init__(self, parent, palette: theme.Palette, fonts, steps, state,
-                 on_finished, *, resumed: bool = False):
+                 on_finished, *, resumed: bool = False, on_close=None,
+                 on_view_status=None):
         super().__init__(parent, bg=palette.bg)
         self._palette, self._fonts = palette, fonts
         self._steps, self._state = steps, state
         self._on_finished = on_finished
+        # Both optional: a caller with nowhere to send "Close" or "View status"
+        # (there is none today, but a test building this screen standalone
+        # might have neither) gets a terminal panel with only Copy diagnostics
+        # rather than a button wired to nothing.
+        self._on_close = on_close
+        self._on_view_status = on_view_status
         self._events: queue.Queue = queue.Queue()
         self._log: list[str] = []
         self._outcome = Outcome(0)
@@ -207,8 +219,57 @@ class WizardScreen(tk.Frame):
             fg=self._palette.text if self._outcome.code == 0 else self._palette.error)
         if self._outcome.code != 0 and self._log and not self._log_box.winfo_ismapped():
             self._toggle_log()
+        self._populate_terminal_buttons()
         self._on_finished(Outcome(self._outcome.code, self._outcome.message,
                                   tuple(self._log)))
+
+    def _populate_terminal_buttons(self) -> None:
+        """A terminal screen with no buttons is a dead end.
+
+        The `run_window` this screen replaced had a working Close button here
+        (docs/macos-install-test-matrix.md case 3), and install.py's
+        `_ACTIONS` for `bootstrap`, `connect` and `verify` have told a failed
+        user to press Copy diagnostics since the installer was written --
+        against a button that has never existed anywhere in the app. A
+        success outcome reaches this too (`_on_finished` immediately swaps
+        this screen for the probe spinner on that path), but populating it
+        unconditionally is what makes every other terminal outcome --
+        failure, a dead end, a reboot -- come with real buttons instead of an
+        outcome sentence and nothing else.
+        """
+        widgets.Button(self._buttons, self._palette, self._fonts,
+                       "Copy diagnostics", self._copy_diagnostics,
+                       width=160).pack(side="left", padx=(0, 8))
+        if self._outcome.code != 0 and self._on_view_status is not None:
+            # The only way out of a run that failed before a VM exists: a
+            # relaunch used to force straight back into this same wizard
+            # (`app.py`'s auto_setup gate saw no VM and started it again),
+            # so Copy diagnostics was reachable from the failure screen
+            # itself but the status screen -- and its own Set up button for
+            # trying again -- never was.
+            widgets.Button(self._buttons, self._palette, self._fonts,
+                           "View status", self._on_view_status, primary=True,
+                           width=150).pack(side="left", padx=(0, 8))
+        if self._on_close is not None:
+            widgets.Button(self._buttons, self._palette, self._fonts, "Close",
+                           self._on_close, width=100).pack(side="left")
+
+    def _copy_diagnostics(self) -> None:
+        """Reuses status.diagnostics_text rather than a second formatter.
+
+        There is no Readiness or Access here -- this screen runs before either
+        is known, and a run that fails at `create_vm` never gets one at all --
+        so it is handed the "nothing established" default and no access. The
+        outcome message is folded in the same way `app._log_with_notice` folds
+        it into the status screen's log: `_render` strips it out of `_log` so
+        the finish row can still turn done, and it belongs in the text a user
+        pastes into a bug report exactly as much as it belongs on screen.
+        """
+        log = (*self._log, self._outcome.message) if self._outcome.message \
+            else tuple(self._log)
+        self.clipboard_clear()
+        self.clipboard_append(status_screen.diagnostics_text(
+            Readiness(), None, version=constants.APP_VERSION, log=log))
 
     def cancelled(self) -> Outcome:
         """The window was closed mid-install. Report failure rather than

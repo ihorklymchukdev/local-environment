@@ -79,8 +79,11 @@ def test_a_step_label_prefers_the_providers_own_words():
 
 
 def test_a_step_without_a_label_falls_back_to_the_installers_wording():
+    # "Preparing", not "Creating": the same step now starts an existing but
+    # stopped VM as well as creating an absent one (host/core/install.py's
+    # _ensure_vm_running), and the wizard's wording must not claim only one.
     assert wizard.step_label(Step("create_vm", lambda: None)) == \
-        "Creating the virtual machine"
+        "Preparing the virtual machine"
 
 
 def test_an_unknown_step_shows_its_own_name_rather_than_nothing():
@@ -238,3 +241,44 @@ def test_diagnostics_carry_the_finish_sentence_once_it_is_in_the_log():
         READY, ACCESS, version="0.1.0",
         log=setup_app._log_with_notice((), "Ready. Try: omelet up <folder>"))
     assert "Ready. Try: omelet up <folder>" in text
+
+
+def test_the_access_panel_is_not_gated_on_readiness_being_ready():
+    # The Lima fallback (_PORT_UNCONFIRMED, _fallback_note's "run setup, then
+    # open this window again") exists precisely for states `ready` excludes --
+    # a VM that exists but whose engine never finished installing, or one that
+    # has never booted at all. Gating the panel on `readiness.ready` made all
+    # of that text, and every field in it, unreachable from this screen.
+    assert status.show_access_panel(ACCESS) is True
+    assert status.show_access_panel(None) is False
+
+
+class _StatefulRun:
+    """The one fact `_should_auto_start` reads off InstallState: whether
+    anything has ever completed. A real `InstallState` over a tmp_path file
+    would work identically; this avoids a filesystem fixture for a one-line
+    check."""
+
+    def __init__(self, completed):
+        self._completed = completed
+
+    def completed(self):
+        return self._completed
+
+
+def test_a_truly_fresh_machine_auto_starts_the_wizard():
+    assert setup_app._should_auto_start(Readiness(), _StatefulRun(set())) is True
+
+
+def test_a_machine_that_failed_a_previous_attempt_does_not_auto_start_again():
+    # The create_vm relaunch trap: a VM that keeps failing to create never
+    # makes `vm_exists` true, so gating on that fact alone sent every relaunch
+    # straight back into another doomed wizard run, with no way to ever reach
+    # the status screen or its Copy diagnostics button.
+    assert setup_app._should_auto_start(
+        Readiness(), _StatefulRun({"preflight"})) is False
+
+
+def test_an_existing_vm_never_auto_starts_the_wizard():
+    assert setup_app._should_auto_start(
+        Readiness(vm_exists=True), _StatefulRun(set())) is False

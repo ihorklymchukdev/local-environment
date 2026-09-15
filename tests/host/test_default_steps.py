@@ -23,6 +23,7 @@ class FakeProvider:
         self._exists = exists
         self._reboot = reboot
         self.created = False
+        self.started = False
         self.resumed_with = None
 
     def preflight(self): return Diagnosis([CheckResult("fine", True)])
@@ -37,6 +38,9 @@ class FakeProvider:
         if self.rootfs is None:
             raise ValueError("install_dir and rootfs are required to create the VM")
         self.created = True
+
+    def start(self):
+        self.started = True
 
 
 class SelfImagingProvider(FakeProvider):
@@ -224,6 +228,21 @@ def test_the_gate_registers_resume_before_asking_for_a_restart(tmp_path):
     with pytest.raises(RebootRequired):
         run(build(provider, tmp_path), state, {})
     assert provider.resumed_with == r"C:\Apps\Omelet\setup.exe"
+
+
+def test_create_vm_starts_an_existing_but_stopped_vm(tmp_path):
+    # `omelet setup`'s status summary tells a user with a stopped VM to "run
+    # setup again to start it", but nothing in this list ever called start()
+    # on a VM that merely existed -- Lima's `shell` refuses a stopped
+    # instance outright, and only WSL2 hid the gap (`wsl.exe -d` auto-starts
+    # a distro). create_vm must ensure the VM is *running*, not just present.
+    state = InstallState(tmp_path / "state.json")
+    provider = FakeProvider(exists=True)
+    run(build(provider, tmp_path), state,
+        {"fetch_image": lambda emit: None, "bootstrap": lambda: None,
+         "connect": lambda: None, "verify": lambda: None})
+    assert provider.started, "an existing VM must be started, not left alone"
+    assert not provider.created, "an existing VM must not be recreated"
 
 
 def test_a_vm_destroyed_outside_setup_is_rebuilt_on_a_re_run(tmp_path):

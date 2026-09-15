@@ -210,12 +210,33 @@ class LimaProvider:
         what fixes it.
         """
         checks = list(self._os_checks())
+        checks.append(self._lima_version_check())
+        return Diagnosis(checks)
+
+    def _lima_version_check(self) -> CheckResult:
+        """The label claims a version (`f"Lima {LIMA_VERSION}"`), which this
+        branch made load-bearing: every on-disk-layout assumption LimaProvider
+        makes -- where `runtime()`'s install puts things, what `access()`
+        parses -- is a 2.2.0 assumption. Checking only that *some* `limactl`
+        is executable told a Mac with Homebrew Lima 1.x, and no managed copy,
+        "Lima 2.2.0 ✓". Actually running it and matching the version string is
+        the same check `lima_install._require_version` makes on a freshly
+        downloaded binary.
+        """
+        label = f"Lima {lima_install.LIMA_VERSION}"
         from shutil import which
         present = os.access(self.limactl, os.X_OK) or which(self.limactl) is not None
-        checks.append(CheckResult(
-            f"Lima {lima_install.LIMA_VERSION}", present,
-            None if present else "run Omelet setup, which installs Lima for you"))
-        return Diagnosis(checks)
+        if not present:
+            return CheckResult(label, False,
+                               "run Omelet setup, which installs Lima for you")
+        result = self._spawn([self.limactl, "--version"])
+        output = f"{result.stdout} {result.stderr}"
+        matches = result.ok and lima_install.LIMA_VERSION in output
+        return CheckResult(
+            label, matches,
+            None if matches else
+            "a different Lima is on this Mac; run Omelet setup, which "
+            "installs the version this app was built for")
 
     def _os_checks(self):
         release = self._mac_ver()[0]

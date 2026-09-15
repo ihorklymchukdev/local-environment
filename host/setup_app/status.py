@@ -67,6 +67,21 @@ def diagnostics_text(readiness: Readiness, access: Access | None, *,
     return "\n".join(lines) + "\n"
 
 
+def show_access_panel(access: Access | None) -> bool:
+    """Whether the access panel belongs on screen at all.
+
+    Not gated on `readiness.ready`: the Lima fallback in `LimaProvider.access`
+    exists precisely so this screen shows something true even before the
+    first boot (`lima._PORT_UNCONFIRMED`) or when the VM exists but the engine
+    never finished installing -- both states `ready` excludes by definition,
+    which used to make that fallback text, and the note steering a user to
+    "run setup, then open this window again", unreachable from here. A user
+    whose VM exists but whose engine install failed was left with no route in
+    at all, not even the `ssh`/`wsl` command that would let them look.
+    """
+    return access is not None
+
+
 class StatusScreen(tk.Frame):
     def __init__(self, parent, palette: theme.Palette, fonts,
                  readiness: Readiness, access: Access | None, *,
@@ -96,7 +111,7 @@ class StatusScreen(tk.Frame):
                      font=fonts["body"], anchor="w", justify="left",
                      wraplength=520).pack(fill="x", pady=(10, 0))
 
-        if access is not None and readiness.ready:
+        if show_access_panel(access):
             self._access_panel(body, access)
 
         buttons = tk.Frame(body, bg=palette.bg)

@@ -351,19 +351,29 @@ _ACTIONS = {
     "fetch_image": "The Linux image could not be downloaded — the internet "
                    "connection was unavailable. Run setup again and the download "
                    "continues from where it stopped.",
-    "install_runtime": "Lima could not be downloaded — the internet connection "
-                       "was unavailable, or the download did not match its "
-                       "checksum. Run setup again; the download continues from "
-                       "where it stopped.",
-    "create_vm": "The virtual machine could not be created. Restart the computer, "
-                 "make sure there is at least 10 GB free, and run setup again.",
-    "bootstrap": "Omelet could not be installed inside the virtual machine. The "
-                 "detail above comes from inside the VM. Run setup again; if it "
-                 "fails the same way twice, send us that text.",
+    # A checksum mismatch unlinks the partial file (download.fetch), and an
+    # unsupported processor never starts a download at all (archive_for) --
+    # so "continues from where it stopped" was only ever true for one of the
+    # three causes this step can fail with.
+    "install_runtime": "Lima could not be downloaded. A dropped internet "
+                       "connection resumes on the next run; a checksum "
+                       "mismatch starts the download over; an unsupported "
+                       "processor cannot run Lima at all. Run setup again.",
+    "create_vm": "The virtual machine could not be created or started. Restart "
+                 "the computer, make sure there is at least 10 GB free, and "
+                 "run setup again.",
+    # Neither sentence below may say where the detail is: the headless CLI
+    # prints this action after the detail, the wizard shows this action AS
+    # the detail label with the raw error in the log box beneath it -- "above"
+    # is true in one front door and false in the other.
+    "bootstrap": "Omelet could not be installed inside the virtual machine. "
+                 "The error came from inside it; open the log for the exact "
+                 "text. Run setup again; if it fails the same way twice, "
+                 "send us that text.",
     "connect": "The Omelet service inside the virtual machine would not work "
-               "with this app, or would not accept this computer — the "
-               "message above says which. Run setup again; if it fails the "
-               "same way twice, use Copy diagnostics and send us the text.",
+               "with this app, or would not accept this computer. Open the "
+               "log to see which. Run setup again; if it fails the same way "
+               "twice, use Copy diagnostics and send us the text.",
     "verify": "The test project did not answer. Run setup again; if it fails a "
               "second time, use Copy diagnostics and send us the text.",
 }
@@ -423,8 +433,7 @@ def default_steps(provider, *, cache_dir, template_dir: Path, domain,
     if image is not None:
         steps.append(step("fetch_image", fetch_image, always_run=True, progress=True))
     steps += [
-        step("create_vm", lambda: None if provider.exists() else provider.create(),
-             always_run=True),
+        step("create_vm", lambda: _ensure_vm_running(provider), always_run=True),
         step("bootstrap", lambda: _bootstrap(provider), always_run=True),
         # Before verify: a mismatched or refusing agent is one sentence here,
         # not a 404 or 401 minutes into the smoke test.
@@ -437,6 +446,19 @@ def default_steps(provider, *, cache_dir, template_dir: Path, domain,
              always_run=True),
     ]
     return steps
+
+
+def _ensure_vm_running(provider) -> None:
+    """Existing is not running. `omelet setup`'s summary told a user with a
+    stopped VM to "run setup again to start it", but nothing in this list ever
+    called `start()` -- Lima's `shell` refuses a stopped instance outright
+    ("... is stopped, run 'limactl start ...'"), which is why only a Lima run
+    ever surfaced this: `wsl.exe -d` auto-starts a distro, so WSL2 hid the gap
+    behind its own exec() calls."""
+    if provider.exists():
+        provider.start()
+    else:
+        provider.create()
 
 
 def _bootstrap(provider, *, repair: bool = False) -> None:

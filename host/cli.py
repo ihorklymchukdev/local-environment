@@ -284,20 +284,35 @@ def setup(resume: bool = typer.Option(False, "--resume"),
             exe_path=_sys.executable,
         )
 
-    def report(progress: Progress):
-        if progress.fraction is not None:
-            return          # the window draws a bar; a terminal would print 100 lines
-        if progress.status not in ("running", "done", "failed"):
-            return
-        typer.echo(f"[{progress.status:>7}] {progress.step}")
-        if progress.message:
-            typer.echo(progress.message)
-
     if not headless:
         from host.setup_app.app import run_window
         raise typer.Exit(code=run_window(provider, build_steps, state, resumed=resume))
 
     steps = build_steps()
+    # A provider names its own step's words -- "Installing Lima 2.2.0" is
+    # Lima's sentence, not the installer's (see Step.label) -- so headless
+    # must use it too, the same way the window's step_label() does.
+    labels = {s.name: s.label for s in steps if s.label}
+    # One line per ten percent of a long step, not per whole-percent event:
+    # `_emitter` already throttles to 391 events for the rootfs, which is 391
+    # lines of terminal output otherwise -- headless printed nothing at all
+    # between "[running] install_runtime" and the step's own "done".
+    last_decile: dict[str, int] = {}
+
+    def report(progress: Progress):
+        label = labels.get(progress.step, progress.step)
+        if progress.fraction is not None:
+            decile = int(progress.fraction * 10)
+            if last_decile.get(progress.step, -1) >= decile:
+                return
+            last_decile[progress.step] = decile
+            typer.echo(f"[running] {label} — {decile * 10}%")
+            return
+        if progress.status not in ("running", "done", "failed"):
+            return
+        typer.echo(f"[{progress.status:>7}] {label}")
+        if progress.message:
+            typer.echo(progress.message)
 
     if resume:
         typer.echo(RESUME_NOTICE)
@@ -341,6 +356,11 @@ def uninstall(purge: bool = typer.Option(False, "--purge")):
     # The VM's own directory: wsl --unregister normally empties it, but a
     # failed or partial destroy leaves a multi-gigabyte vhdx behind.
     shutil.rmtree(install_dir, ignore_errors=True)
+    # macOS only in practice (root/lima is never created on Windows), but
+    # harmless to remove unconditionally: setup's install_runtime step puts
+    # the managed Lima here (lima_install.managed_root), and leaving it
+    # behind was the ~100 MB --purge never actually cleaned up.
+    shutil.rmtree(root / "lima", ignore_errors=True)
     # No host-side state.db to remove any more: project state lives in the VM
     # at /opt/omelet/state.db and goes with the VM.
 

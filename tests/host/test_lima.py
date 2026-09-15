@@ -134,8 +134,29 @@ def test_a_resolved_path_still_satisfies_the_installed_check(tmp_path):
     binary.write_text("#!/bin/sh\n")
     binary.chmod(0o755)
 
-    provider = LimaProvider(limactl=str(binary), runner=FakeRunner(), mac_ver=_mac())
+    provider = LimaProvider(
+        limactl=str(binary),
+        runner=FakeRunner(stdout=f"limactl version {lima_install.LIMA_VERSION}\n".encode()),
+        mac_ver=_mac())
     assert provider.is_supported().ok
+
+
+def test_a_different_lima_version_is_reported_as_not_installed(tmp_path):
+    # The check used to be "is some limactl executable", which told a Mac with
+    # Homebrew Lima 1.x -- no managed copy -- that "Lima 2.2.0" was present.
+    # This branch made the version claim load-bearing, so the check must
+    # actually run `--version` and compare, not just find an executable.
+    binary = tmp_path / "limactl"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+
+    provider = LimaProvider(limactl=str(binary),
+                            runner=FakeRunner(stdout=b"limactl version 1.0.0\n"),
+                            mac_ver=_mac())
+    diagnosis = provider.is_supported()
+    lima_check = next(c for c in diagnosis.checks if "Lima" in c.label)
+    assert not lima_check.ok
+    assert "setup" in lima_check.fix.lower()
 
 
 # --- installing Lima instead of dead-ending on a missing one ---

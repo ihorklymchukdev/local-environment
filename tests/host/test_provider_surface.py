@@ -24,10 +24,13 @@ LIFECYCLE_SURFACE = {
 
 
 # Not part of the Protocol, and deliberately so: the Protocol is the lifecycle,
-# and these exist only so `default_steps` can build an install list without
-# asking what platform it is on. They are still a contract every provider owes,
-# and nothing noticed that LimaProvider owed two of them and had neither --
-# `omelet setup` on macOS died with an AttributeError before its first step.
+# and these exist only so the installer and the status screen can each ask a
+# provider what they need without asking what platform it is on. Not all from
+# the same caller: `default_steps` reads every name here except `access`,
+# which only `host/setup_app/app.py::show_status` calls. They are still a
+# contract every provider owes, and nothing noticed that LimaProvider owed two
+# of them and had neither -- `omelet setup` on macOS died with an
+# AttributeError before its first step.
 INSTALL_SURFACE = {"image", "register_resume", "location", "terminal",
                    "remediable", "runtime", "access"}
 

@@ -8,6 +8,12 @@
 # x86_64 image and the `ssh:` block right below it, in particular --
 # `ssh.localPort` is a request nobody has confirmed Lima honours.
 vmType: vz
+# Rosetta translates x86 binaries for an *arm64* guest, and only runs on
+# Apple Silicon -- it does nothing under the x86_64 image below, where the
+# guest's own binaries are already native. Left enabled rather than made
+# conditional on image arch: nobody has run an Intel build to know whether
+# Lima even treats the flag differently per image, and that is a behaviour
+# change this branch is not making blind. See docs/macos-install-test-matrix.md.
 rosetta:
   enabled: true
 images:

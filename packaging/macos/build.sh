@@ -52,6 +52,16 @@ count="$(ls -1 "$app/Contents/MacOS" | wc -l | tr -d ' ')"
 # -- `set -e` turns either failure into a build failure, not a user's.
 "$cli" version
 "$cli" selfcheck
+# The spec builds two Analysis objects with two separate PYZs (see omelet.spec)
+# because the CLI and the GUI differ in more than a console flag -- tkinter and
+# the setup_app modules only need to resolve into the GUI's own bundle. Running
+# selfcheck against "$cli" alone proved the wrong binary: a HIDDEN entry
+# dropped from (or diverging on) the `gui = Analysis(...)` line, or tkinter
+# failing to collect into gui.binaries, would still leave the CLI's selfcheck
+# printing five OK lines and this script exiting 0, while Omelet.app -- what a
+# double-click actually launches -- showed a Dock icon and died on its first
+# draw. That is the exact failure selfcheck exists to catch.
+"$gui" selfcheck
 
 # The bundle is only an app if its plist points at the windowed executable and
 # does not mark it background-only. BUNDLE infers both wrongly here (see the
