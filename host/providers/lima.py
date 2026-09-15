@@ -41,6 +41,7 @@ def parse_ssh_config(text: str) -> dict[str, str]:
             found[label] = parts[1].strip().strip('"')
     return found
 
+
 # Homebrew installs limactl here and puts neither prefix on the PATH an app
 # launched from Finder is given -- LaunchServices starts one with
 # /usr/bin:/bin:/usr/sbin:/sbin, and a GUI process inherits no shell profile.
