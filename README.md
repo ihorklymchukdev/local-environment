@@ -57,7 +57,9 @@ omelet vm create
 ```
 
 `vm create` imports the `omelet-vm` distro under `%LOCALAPPDATA%\Omelet\vm`,
-enables systemd, and bootstraps Docker + Traefik inside it. The imported distro
+enables systemd, and installs the Omelet engine inside it (fetched from `OMELET_ENGINE_URL`,
+default `engine/get.sh` on GitHub; set `OMELET_ENGINE_REF` to a branch or tag to install
+something other than the latest `engine-v*` release). The imported distro
 runs as root: `create()` replaces `/etc/wsl.conf` with a `[boot] systemd=true`
 stanza, dropping the image's default-user setting. `OMELET_ROOTFS` is read
 only by `vm create`; no other command needs it.
@@ -82,8 +84,8 @@ you which one you are in — always pass `-d omelet-vm`.
 ```powershell
 wsl -d omelet-vm -u root                                     # a shell in the VM
 wsl -d omelet-vm -u root -- docker ps                        # traefik + projects
-wsl -d omelet-vm -u root -- cat /opt/omelet/.bootstrapped   # bootstrap version
-wsl -d omelet-vm -u root -- bash /opt/omelet/bin/bootstrap.sh 1   # re-run, live output
+wsl -d omelet-vm -u root -- cat /opt/omelet/engine.version            # installed engine ref
+wsl -d omelet-vm -u root -- bash /opt/omelet/engine/install.sh engine-vX.Y.Z --repair   # re-run, live output
 ```
 
 Projects land in `/opt/omelet/projects/<id>/`, with the generated Traefik

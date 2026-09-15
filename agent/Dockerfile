@@ -44,9 +44,8 @@ RUN if getent group "${DOCKER_GID}" >/dev/null; then \
 
 WORKDIR /app
 
-# Only the installable package. The compose manifests that deploy this image,
-# and the verify fixture, live under host/provision: the host pushes them into
-# a VM that has no agent yet, so they cannot ship inside the agent.
+# Only the installable package. The stack manifest lives in engine/ and the
+# verify fixture under host/provision/nginx-hello; neither ships inside the image.
 COPY pyproject.toml /app/
 COPY __init__.py /app/
 COPY core /app/core

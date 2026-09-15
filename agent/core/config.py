@@ -34,7 +34,7 @@ class AgentConfig:
     ready_timeout: float = READY_TIMEOUT
     projects_root: Path = Path(constants.GUEST_PROJECTS)
     state_db: Path = Path(f"{constants.GUEST_ROOT}/state.db")
-    # The shared secret bootstrap.sh generates in the guest. Phase 3 replaces
+    # The shared secret the engine installer generates in the guest. Phase 3 replaces
     # it with a service-issued device token; see agent/api/app.py's auth check.
     token_path: Path = Path(f"{constants.GUEST_ROOT}/agent.token")
     # A runaway/abuse guard on file uploads, not a policy -- generous enough

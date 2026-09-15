@@ -12,12 +12,50 @@ Windows/WSL2 is the primary platform; macOS/Lima exists for parity and is **unve
 `task.md` and `docs/superpowers/plans/2026-08-14-local-runtime-poc.md` hold the original blueprint
 and task plan; `.superpowers/sdd/` holds the per-task execution ledger.
 
+## Architecture shape: the host is a VM shell, the engine is everything inside
+
+Two halves, shipped and versioned independently:
+
+- **Host** (`host/`, a frozen desktop binary) — creates and runs the VM, runs one bootstrap
+  command in it (fetch `OMELET_ENGINE_URL` → `bash`), reads the token, forwards ports, and talks
+  to the agent over HTTP. It holds no guest files and no knowledge of what the engine installs.
+- **Engine** (`engine/` + `agent/`) — everything inside the VM: Docker, the Traefik+agent stack,
+  the in-VM `omelet` CLI, agent instructions and skills (via `npx skills add`). Released as
+  `engine-v*` tags with a matching `omelet-agent` image. The same `get.sh` provisions a cloud VM.
+
+The seam between them is a fixed contract — token path, agent port + `/health` `api` number, edge
+port, `/opt/omelet/engine.version` — and nothing else. A change inside the VM must never need a
+host release; if it does, the logic is on the wrong side.
+
+### Releasing the engine (manual until CI exists)
+
+Before the first shipped host can install anything:
+
+- The repository is public.
+- `engine/get.sh` exists on `main` — hosts fetch `ENGINE_URL` from `main`, not from a tag.
+- At least one `engine-vX.Y.Z` tag exists.
+- The ghcr image named by that tag's `engine/stack.yml` is published and public.
+- `agent/__init__.py`, the Dockerfile's `AGENT_VERSION` and `engine/stack.yml` are bumped together
+  before the first tag — the agent gained `/health`'s `api` field after 0.1.0.
+
+`engine/get.sh` on `main` is a live contract for every shipped host: keep its env vars
+(`OMELET_ENGINE_REPO`, `OMELET_ENGINE_REF`, `OMELET_ENGINE_REPAIR`), marker path and exit
+semantics backward compatible.
+
+1. Bump `agent/__init__.py`'s `__version__`, the Dockerfile's `AGENT_VERSION` and
+   `engine/stack.yml`'s image tag together (`tests/test_constants_agree.py` holds them equal).
+2. `docker build -t ghcr.io/ihorklymchukdev/omelet-agent:X.Y.Z agent/ && docker push ghcr.io/ihorklymchukdev/omelet-agent:X.Y.Z`
+3. `git tag engine-vX.Y.Z && git push origin engine-vX.Y.Z`
+
+Bump `agent/core/constants.API_VERSION` (and the host's `SUPPORTED_API`) only when a route the host
+calls changes incompatibly — that one needs a host release.
+
 ## Commands
 
 ```bash
 pip install -e ".[dev]"
 
-python3 -m pytest -q                                    # full suite (422 tests, ~6s)
+python3 -m pytest -q                                    # full suite (434 tests, ~7s)
 python3 -m pytest tests/agent/test_project.py -q        # one file
 python3 -m pytest -k classify -q                        # one test by name
 ```
@@ -35,7 +73,7 @@ into the two provider classes.
 
 ```
 host CLI (typer)  →  AgentClient (urllib)  →  127.0.0.1:39099 → agent (FastAPI in the VM)
-                  →  VmProvider.exec()     →  guest: dockerd, the token read, bootstrap
+                  →  VmProvider.exec()     →  guest: the engine bootstrap, the token read
                                               /opt/omelet/projects/<id>/
 host localhost:39080 ─────────────────────────→  traefik :39080 → routes by Host header
 ```
@@ -74,22 +112,26 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   failed job into `JobFailedError` carrying the guest's own stderr.
 - `agent/core/` — all platform-free logic: compose parsing, web detection, Traefik overlay
   generation, project identity, failure classification, guest lifecycle, sqlite state.
-- `host/provision/` — every asset the host pushes into the VM: `bootstrap.sh` and `stack.yml`
-  (plus `nginx-hello/`, the installer's verify fixture). They live under `host/` because the
-  agent never reads them and its image never contains them — the host pushes them into a VM that
-  has no agent yet. `bootstrap.sh` installs docker-ce from the official repo, the `edge` network, `/opt/omelet`
-  made group-writable, then `docker compose -f /opt/omelet/stack.yml pull && up -d`. The list of
-  pushed files is `host/core/bootstrap.guest_assets()`, which `cli.selfcheck` also reads.
-- `host/provision/guest/omelet.py` — the `omelet` command **inside** the VM, used by coding
-  agents (Claude Code, Codex, …) working there: `up`/`new`/`clone`/`status`/`logs`/`down`
-  over the agent API with the guest token. One stdlib-only file, loaded by tests by path
-  (`tests/guest/loader.py`); it shares constants with both sides, held equal by
-  `tests/test_constants_agree.py`. `host/provision/agents/` holds what those agents read
-  (`omelet.md`, the `omelet-setup` skill); `bootstrap.sh` step 8, `login-users.sh` (which
-  account is a real login, not a system service) and `install-agents.sh`
-  copy them into each agent's discovery paths (`/etc/claude-code/CLAUDE.md`,
-  `/etc/codex/skills`, `~/.claude/skills`, `~/.agents/skills`, a marked block in
-  `~/.codex/AGENTS.md`). Nothing is written into user repositories.
+- `host/core/bootstrap.py` — the host's whole share of provisioning: unless
+  `/opt/omelet/engine.version` exists (or `repair=True`), it runs a base64 stub as one `bash -lc`
+  argument that downloads `OMELET_ENGINE_URL` in full and runs it, forwarding `OMELET_ENGINE_REF`
+  when set and `OMELET_ENGINE_REPAIR=1` on repair. Values are checked against a shell-safe pattern
+  because the argument is re-parsed by wsl.exe/ssh. `host/provision/` holds only the installer's
+  `nginx-hello` smoke-test project (`tests/host/test_no_guest_assets.py`).
+- `engine/get.sh` — the entrypoint: `resolve_ref` (explicit `OMELET_ENGINE_REF` → installed ref on
+  repair → highest `engine-v*` tag by `sort -V`), downloads that ref's tarball, replaces
+  `/opt/omelet/engine/` with its `engine/`, runs `install.sh <ref> [--repair]`.
+- `engine/install.sh` — Docker, `edge`, `/opt/omelet` permissions, token, the stack (recreating the
+  agent on a new token or repair), Node ≥ 22.20 from NodeSource, `/usr/local/bin/omelet`,
+  `/etc/claude-code/CLAUDE.md`, then per account (root + `lib/login-users.sh`) the Codex block and
+  `~/projects` link (`lib/install-agents.sh`) and
+  `npx -y skills@1.5.26 add /opt/omelet/engine/skills -s '*' -g -a claude-code codex -y </dev/null`.
+  Writes `engine.version` last.
+- `engine/cli/omelet.py` — the `omelet` command **inside** the VM, used by coding agents:
+  `up`/`new`/`clone`/`status`/`logs`/`down` over the agent API with the guest token. One
+  stdlib-only file, loaded by tests by path (`tests/engine/cli/loader.py`); it shares constants
+  with both sides, held equal by `tests/test_constants_agree.py`. `engine/instructions/` and
+  `engine/skills/` hold what those agents read. Nothing is written into user repositories.
 - `agent/api/` — the FastAPI app the host talks to. `app.py::create_app(config, runner, state)` is
   a factory on purpose (no module-level `app`, so importing it opens no sqlite file); `jobs.py` is
   the in-process job registry that keeps slow compose work off the request; `__main__.py` is the
@@ -113,8 +155,6 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   `EXCLUDED_DIRS` (`.git`, `node_modules`, `.venv`, `__pycache__`, at any depth) and the generated
   `.omelet/overlay.yml` — but never `.omelet/project.yml`, which is the user's own configuration. The old
   `lifecycle.push_project` (base64 through `bash -lc`, and its ~24 KB command-line ceiling) is gone.
-  `bootstrap._push_file` still base64s its two assets through `bash -lc`: it runs before the agent
-  exists.
 - **`omelet port add/remove/list` is the only caller of `forward()`.** Without it the
   distinct-port machinery would be dead code the Protocol still advertises. Ports the VM publishes
   itself (the edge port) need no entry here.
@@ -127,22 +167,20 @@ Do not add an `if windows` anywhere else — push the difference into a provider
 - **`wsl.exe` output encoding is split**: meta commands (`-l`, `--version`, `--import`) emit UTF-16LE,
   command passthrough emits UTF-8. `decode_wsl()` sniffs NUL bytes to pick. Use `_meta()` for meta
   commands and `exec()` for passthrough — mixing them corrupts output.
-- **Bootstrap idempotency is a version marker**, `/opt/omelet/.bootstrapped` compared against
-  `host.core.constants.BOOTSTRAP_VERSION`. **Bump `BOOTSTRAP_VERSION` whenever
-  `host/provision/bootstrap.sh` changes**, or existing VMs silently skip the new bootstrap.
-- **A change to the guest CLI or to `host/provision/agents/` needs a `BOOTSTRAP_VERSION` bump**
-  just like `bootstrap.sh` does: the marker is the only thing that makes an existing VM
-  re-provision. Each pushed asset must also fit one `wsl.exe` command line
-  (`test_every_pushed_asset_fits_one_guest_command_line`).
-- **Nothing under `agent/` is bundled into the frozen host binary**, and
-  `tests/host/test_frozen_bundle.py` fails if a `datas` entry reappears. `stack.yml` and the
-  `nginx-hello` verify fixture live under `host/provision/` for that reason: the host pushes them
-  into a VM that has no agent yet, so they cannot ship inside the agent image.
+- **Existing VMs update only when the engine is installed again.** Setup skips an installed engine;
+  the connect step's token repair and a fresh VM are the only reinstall paths today (self-update is
+  deferred — `docs/future/engine-self-update.md`). Accounts created after install get no skills
+  until then.
+- **`npx` inside `install.sh`'s account loop must read `</dev/null`**: the loop reads accounts from
+  stdin, and anything else reading it eats the remaining accounts.
+- **Nothing under `agent/` or `engine/` is bundled into the frozen host binary**, and
+  `tests/host/test_frozen_bundle.py` fails if a `datas` entry reappears. The VM pulls the image
+  and fetches the engine itself; only the `nginx-hello` smoke test and `omelet.yaml` ship with the host.
 - **The host and the agent each own a `constants.py`**, because nothing under `host/` may import
   `agent/`. `tests/test_constants_agree.py` holds every name declared in both modules equal — add
   a shared constant to one and it must go into the other with the same value.
 - **The agent container runs as a non-root user** whose only shared credential with the VM is the
-  `docker` group (`stack.yml`'s `group_add`). `bootstrap.sh` therefore `chgrp`s `/opt/omelet` to
+  `docker` group (`stack.yml`'s `group_add`). `engine/install.sh` therefore `chgrp`s `/opt/omelet` to
   `docker` and sets setgid on its directories *before* `compose up`; skip that and the agent
   cannot open `/opt/omelet/state.db` and `restart: always` crash-loops it.
 - **The agent holds no project paths of its own.** `agent/core/lifecycle.py` builds every compose
@@ -152,7 +190,7 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   URLs are built in `app.py`, the only place holding the configured edge port.
 - **Guest failures must stay loud.** `provider.exec()` returns a `Completed` and never raises, so
   every caller has to check `.ok` itself. `bootstrap.py` routes its calls through `_run()`, which
-  raises `BootstrapError` carrying the guest's stderr, and re-reads the marker afterwards to catch a
+  raises `BootstrapError` carrying the guest's stderr, and re-checks `engine.version` afterwards to catch a
   script that exited 0 without finishing. Dropping an `exec` result turns a multi-minute provisioning
   failure into a silent `VM ready.` — that bug already happened once.
 - **`forward(guest, host)` is a no-op when the ports are equal**, on both platforms: WSL2
@@ -176,28 +214,29 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   succeeded": it drives `host/provision/nginx-hello` through `AgentClient` under the reserved id
   `omelet-selftest` (never derived from the template's folder name, or a re-run could tear down a
   user project), polls the URL for `READY_TIMEOUT` seconds because Traefik publishes a router a beat
-  after the container starts, and deletes the project in a `finally`. `agent_version_step` runs
-  just before it: an agent older than `constants.EXPECTED_AGENT_VERSION` (the tag in
-  `AGENT_IMAGE`) is re-provisioned once with `bootstrap(force=True)` — the guest marker that
-  normally skips bootstrap is exactly what leaves an upgraded host talking to an old agent —
-  and only then reported, in one sentence rather than as a 404 minutes later. The same step also
-  recovers an agent that answers `agent_unconfigured` or `unauthorized`: `/health` is exempt from
+  after the container starts, and deletes the project in a `finally`. `connect_step` runs just before it: an agent whose `/health` `api` is not in
+  `constants.SUPPORTED_API` is reported in one sentence and never repaired, and an agent answering
+  `agent_unconfigured` or `unauthorized` gets one `bootstrap(repair=True)` — `/health` is exempt from
   the token check, so `restart: always` never restarts a container refusing every other route, and
-  the agent reads its token **once, at startup** — which is why the recovery re-provisions *and*
-  `bootstrap.restart_agent`s the container, then re-reads the token before dialling again.
+  the agent reads its token **once, at startup**, which is why repair recreates the container — then
+  the host re-reads the token and dials again.
 - CLI command bodies use **function-local imports** deliberately (keeps `omelet --help` and the
   smoke test fast, and avoids importing provider code on unsupported hosts). `cli._provider_factory`
   is a module attribute so tests can monkeypatch the provider.
 
 ## Testing conventions
 
-- No test ever spawns a real subprocess or touches a real VM. Provider tests inject a `FakeRunner`
-  that records `argv` and returns scripted bytes; CLI tests monkeypatch `cli._provider_factory` with
-  a `FakeProvider`. Assertions are about **constructed argv and decoded output**, not side effects.
+- No test spawns `wsl.exe`/`limactl`, touches a real VM, or reaches the network. Provider tests
+  inject a `FakeRunner` that records `argv` and returns scripted bytes; CLI tests monkeypatch
+  `cli._provider_factory` with a `FakeProvider`. Assertions are about **constructed argv and decoded
+  output**, not side effects. Engine shell scripts are the exception that still runs a real process:
+  they are exercised with `bash` against fakes on `PATH` (see the engine-scripts bullet below).
 - `tests/agent/test_acceptance_detection.py` runs the five real-world compose shapes in
   `tests/fixtures/compose/` through `detect_web` — add a fixture there when changing detection rules.
-- `tests/host/test_bootstrap_shell.py` shells `bash -n` over `bootstrap.sh` and asserts on its text
-  (official Docker repo, marker path). It's the only check on the guest script.
+- Engine scripts are tested under `tests/engine/`: `bash -n` plus text assertions over
+  `install.sh`, `resolve_ref` sourced from `get.sh` with a fake `git` on `PATH`, and
+  `install-agents.sh`/`login-users.sh` run against temporary homes. Nothing there touches the
+  network; the live-VM acceptance run covers apt, NodeSource, npm and ghcr.
 
 ## Conventions
 

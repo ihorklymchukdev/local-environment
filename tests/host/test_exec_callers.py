@@ -12,7 +12,7 @@ HOST = Path(__file__).resolve().parents[2] / "host"
 # design decision, not a formality.
 ALLOWED_CALLERS = {
     ("core/bootstrap.py", "_run"),
-    ("core/bootstrap.py", "read_marker"),
+    ("core/bootstrap.py", "_installed"),
     ("client.py", "read_token"),
 }
 

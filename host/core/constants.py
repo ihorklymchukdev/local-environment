@@ -5,9 +5,9 @@ import `agent/`. Names appearing in both modules are held equal by
 `tests/test_constants_agree.py` -- that test, not a shared import, is what stops
 the two copies drifting.
 
-Guest paths are derived from GUEST_ROOT rather than spelled out, and the shell
-tests compare bootstrap.sh's literals against these names, so the host and the
-script cannot end up pointing at different files.
+Guest paths are derived from GUEST_ROOT rather than spelled out, and the engine
+shell tests compare install.sh's literals against these names, so the host and
+the engine cannot end up pointing at different files.
 """
 
 GUEST_ROOT = "/opt/omelet"
@@ -25,26 +25,17 @@ VERIFY_PROJECT_ID = "omelet-selftest"
 # constants test fails if the agent ever accepts a second spelling.
 COMPOSE_FILE = "docker-compose.yml"
 
-# Bootstrap is purely host-side provisioning; the agent never reads any of these.
-# Bump the version whenever host/provision/bootstrap.sh changes, or every
-# existing VM silently skips the new provisioning.
-BOOTSTRAP_VERSION = 6
-BOOTSTRAP_MARKER = f"{GUEST_ROOT}/.bootstrapped"
+# The host knows only where the engine's entrypoint lives and which file says
+# it finished; what gets installed, and which version, is decided in the VM.
+ENGINE_URL = ("https://raw.githubusercontent.com/ihorklymchukdev/"
+              "local-environment/main/engine/get.sh")
+ENGINE_MARKER = f"{GUEST_ROOT}/engine.version"
 
-# Where the pushed copy of host/provision/stack.yml lands. Compose reads its
-# interpolation values from a `.env` beside the compose file, which is why
-# bootstrap.sh writes one directly under GUEST_ROOT too; no host code opens
-# that file, so it has no constant here.
-GUEST_STACK = f"{GUEST_ROOT}/stack.yml"
-
-# Generated in the guest by bootstrap.sh, never pushed from the host. The host
+# Generated in the guest by the engine installer, never pushed from the host. The host
 # reads it fresh per client via provider.exec(root=True) rather than caching a
 # copy -- see host/client.py.
 GUEST_TOKEN = f"{GUEST_ROOT}/agent.token"
 
-# Must match stack.yml's OMELET_AGENT_IMAGE default; a test holds the two equal.
-AGENT_IMAGE = "ghcr.io/ihorklymchukdev/omelet-agent:0.1.0"
-# The agent version this host expects to talk to, derived from the tag it
-# deploys rather than written out again: two literals would let a bumped image
-# leave the compatibility check comparing against a version nothing runs.
-EXPECTED_AGENT_VERSION = AGENT_IMAGE.rsplit(":", 1)[-1]
+# The agent API numbers this host can drive. An engine release that keeps the
+# routes compatible keeps the number, so it never needs a host release.
+SUPPORTED_API = frozenset({1})

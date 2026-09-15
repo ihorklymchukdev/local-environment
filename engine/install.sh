@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
-# One-time OS-level provisioning only. Everything above the OS -- Traefik, the
-# agent, their versions -- lives in stack.yml and is updated by re-running this.
+# Installs the engine into this VM. Run as root by get.sh from the unpacked
+# engine directory; re-running it is safe.
 set -euo pipefail
 
-MARKER=/opt/omelet/.bootstrapped
-WANT_VERSION="${1:-1}"
+ENGINE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [[ -f "$MARKER" ]] && [[ "$(cat "$MARKER")" == "$WANT_VERSION" ]]; then
-  echo "already bootstrapped at version $WANT_VERSION"
-  exit 0
+REF="${1:?usage: install.sh <engine ref> [--repair]}"
+REPAIR=0
+if [[ "${2:-}" == --repair ]]; then
+  REPAIR=1
 fi
+SKILLS_CLI=skills@1.5.26
+# skills@1.5.26 declares node >=22.20.0; Ubuntu 24.04's own nodejs is 18.
+NODE_MIN=22.20.0
+TOKEN_CREATED=0
+
+# A failed reinstall must not look installed; get.sh already resolved the ref.
+rm -f /opt/omelet/engine.version
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -18,18 +25,25 @@ export DEBIAN_FRONTEND=noninteractive
 # integration puts its own docker CLI on PATH, which made this skip the install
 # and then fail at `systemctl enable` with no docker.service.
 if ! dpkg -s docker-ce >/dev/null 2>&1; then
-  apt-get update
-  apt-get install -y ca-certificates curl
+  if ! { apt-get update && apt-get install -y ca-certificates curl; }; then
+    echo "could not install Docker: download.docker.com or the Ubuntu package mirrors may be unreachable" >&2
+    exit 1
+  fi
   install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-    -o /etc/apt/keyrings/docker.asc
+  if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+      -o /etc/apt/keyrings/docker.asc; then
+    echo "could not install Docker: download.docker.com or the Ubuntu package mirrors may be unreachable" >&2
+    exit 1
+  fi
   chmod a+r /etc/apt/keyrings/docker.asc
   . /etc/os-release
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
 https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
     > /etc/apt/sources.list.d/docker.list
-  apt-get update
-  apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  if ! { apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin; }; then
+    echo "could not install Docker: download.docker.com or the Ubuntu package mirrors may be unreachable" >&2
+    exit 1
+  fi
 fi
 
 # Absolute path throughout: if Docker Desktop's CLI is on PATH it would
@@ -77,6 +91,7 @@ printf 'OMELET_DOCKER_GID=%s\n' "$DOCKER_GID" > /opt/omelet/.env
 # reading, and set -o pipefail then fails the whole script over a byte count
 # that was never wrong.
 if [[ ! -s /opt/omelet/agent.token ]]; then
+  TOKEN_CREATED=1
   # `install` sets the mode on creation, before any content lands in the
   # file -- a plain `>` redirect creates it under root's umask (644) first
   # and only narrows it on the next line, leaving it briefly world-readable.
@@ -94,39 +109,87 @@ chmod 640 /opt/omelet/agent.token
 # 7. traefik + the agent, as one compose stack.
 # Always pull: this is how an agent update reaches an already-provisioned VM,
 # so both the first install and every update need the network.
-test -f /opt/omelet/stack.yml || { echo 'stack.yml was never pushed to the VM' >&2; exit 1; }
+install -m 644 "$ENGINE_DIR/stack.yml" /opt/omelet/stack.yml
 if ! /usr/bin/docker compose -f /opt/omelet/stack.yml pull; then
   echo "could not pull the Omelet images: the registry was unreachable." >&2
   echo "Check the network connection or proxy and run setup again." >&2
   exit 1
 fi
 /usr/bin/docker compose -f /opt/omelet/stack.yml up -d
-
-# 8. coding agents: the in-VM `omelet` command, and what each agent reads.
-if ! dpkg -s git >/dev/null 2>&1; then
-  apt-get update
-  apt-get install -y git
+# The agent reads its token once, at startup, and `up -d` leaves an unchanged
+# container running.
+if (( TOKEN_CREATED || REPAIR )); then
+  /usr/bin/docker compose -f /opt/omelet/stack.yml up -d --force-recreate agent
 fi
-command -v python3 >/dev/null || { echo 'python3 is missing; the omelet command needs it' >&2; exit 1; }
-install -m 755 /opt/omelet/bin/omelet /usr/local/bin/omelet
 
-# System-wide where the agent has such a place, so which user runs the
-# session does not matter.
-install -d /etc/claude-code /etc/codex/skills
-install -m 644 /opt/omelet/agents/omelet.md /etc/claude-code/CLAUDE.md
-rm -rf /etc/codex/skills/omelet-setup
-cp -r /opt/omelet/agents/skills/omelet-setup /etc/codex/skills/
+# 8. git for `omelet clone`, Node for `npx skills`.
+if ! dpkg -s git >/dev/null 2>&1; then
+  if ! { apt-get update && apt-get install -y git; }; then
+    echo "could not install git: the Ubuntu package mirrors may be unreachable" >&2
+    exit 1
+  fi
+fi
+node_ok() {
+  command -v node >/dev/null 2>&1 || return 1
+  local have
+  have="$(node -p 'process.versions.node')" || return 1
+  [[ "$(printf '%s\n' "$NODE_MIN" "$have" | sort -V | head -n 1)" == "$NODE_MIN" ]]
+}
+if ! node_ok; then
+  if ! command -v gpg >/dev/null 2>&1; then
+    if ! { apt-get update && apt-get install -y gnupg; }; then
+      echo "could not install gnupg: the Ubuntu package mirrors may be unreachable" >&2
+      exit 1
+    fi
+  fi
+  install -m 0755 -d /etc/apt/keyrings
+  if ! curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+      | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg; then
+    echo "could not reach NodeSource to install Node.js 22" >&2
+    exit 1
+  fi
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
+    > /etc/apt/sources.list.d/nodesource.list
+  if ! { apt-get update && apt-get install -y nodejs; }; then
+    echo "could not reach NodeSource to install Node.js 22" >&2
+    exit 1
+  fi
+  node_ok || { echo "Node.js $NODE_MIN or newer did not install" >&2; exit 1; }
+fi
 
-# Per home where it is not: root (WSL sessions), every login account (Lima's
-# user) and /etc/skel for accounts made later. The docker group is the only
-# way a non-root user can read the agent token.
-bash /opt/omelet/bin/install-agents.sh /opt/omelet/agents /root 0:0
-bash /opt/omelet/bin/install-agents.sh /opt/omelet/agents /etc/skel 0:0
+# 9. the in-VM omelet command and the instructions every session loads.
+install -m 755 "$ENGINE_DIR/cli/omelet.py" /usr/local/bin/omelet
+install -d /etc/claude-code
+install -m 644 "$ENGINE_DIR/instructions/omelet.md" /etc/claude-code/CLAUDE.md
+
+# 10. copies earlier provisioning made, which npx now owns or nothing reads.
+rm -rf /etc/codex/skills/omelet-setup /opt/omelet/bin /opt/omelet/agents \
+  /opt/omelet/.bootstrapped \
+  /etc/skel/.claude/skills/omelet-setup /etc/skel/.agents/skills/omelet-setup
+if [[ -f /etc/skel/.codex/AGENTS.md ]]; then
+  sed -i '\|^<!-- omelet:begin -->$|,\|^<!-- omelet:end -->$|d' /etc/skel/.codex/AGENTS.md
+fi
+if [[ -L /etc/skel/projects && "$(readlink /etc/skel/projects)" == /opt/omelet/projects ]]; then
+  rm -f /etc/skel/projects
+fi
+
+# 11. per account: docker group, Codex block, ~/projects, skills.
+accounts() {
+  echo "root:0:0:/root"
+  getent passwd | bash "$ENGINE_DIR/lib/login-users.sh" /etc/shells
+}
 while IFS=: read -r name uid gid home; do
-  usermod -aG docker "$name"
-  bash /opt/omelet/bin/install-agents.sh /opt/omelet/agents "$home" "$uid:$gid"
-done < <(getent passwd | bash /opt/omelet/bin/login-users.sh /etc/shells)
+  if [[ "$name" != root ]]; then
+    usermod -aG docker "$name"
+  fi
+  bash "$ENGINE_DIR/lib/install-agents.sh" "$ENGINE_DIR" "$home" "$uid:$gid"
+  # stdin is the account list this loop is reading.
+  if ! runuser -u "$name" -- env HOME="$home" DISABLE_TELEMETRY=1 npx -y "$SKILLS_CLI" add "$ENGINE_DIR/skills" -s '*' -g -a claude-code codex -y </dev/null; then
+    echo "could not install Omelet's skills for $name: the npm registry may be unreachable" >&2
+    exit 1
+  fi
+done < <(accounts)
 
-# 9. marker, last: a failure above must leave no marker behind.
-echo "$WANT_VERSION" > /opt/omelet/.bootstrapped
-echo "bootstrap complete at version $WANT_VERSION"
+# 12. marker, last: a failure above must leave no marker behind.
+echo "$REF" > /opt/omelet/engine.version
+echo "Omelet engine $REF installed"

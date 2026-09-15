@@ -1,6 +1,7 @@
 # Assets pushed into the Linux guest must keep LF endings. A Windows checkout
 # (core.autocrlf=true) rewrites them to CRLF, and bash then reads line 2 of
-# bootstrap.sh as `set -euo pipefail\r` and aborts with "invalid option name".
+# install.sh as `set -euo pipefail\r` and aborts with "invalid option name".
 *.sh text eol=lf
 host/provision/** text eol=lf
+engine/** text eol=lf
 host/providers/omelet.yaml text eol=lf

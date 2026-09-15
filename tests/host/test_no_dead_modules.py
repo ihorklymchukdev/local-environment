@@ -10,9 +10,6 @@ HOST = Path(__file__).resolve().parents[2] / "host"
 # function-local import, which is still an import in the AST.
 ROOTS = {"host.cli"}
 
-# Files here are pushed into the VM and run there; the host never imports them.
-PROVISION = HOST / "provision"
-
 
 def _module_name(py: Path) -> str:
     rel = py.relative_to(HOST.parent).with_suffix("")
@@ -54,7 +51,7 @@ def test_every_host_module_is_reachable_from_the_entry_point():
     still compiles, so the next reader cannot tell which copy is authoritative.
     Phase 2 moved project logic into the agent; anything left behind here that
     nobody calls should have gone with it."""
-    files = sorted(py for py in HOST.rglob("*.py") if PROVISION not in py.parents)
+    files = sorted(HOST.rglob("*.py"))
     assert files, f"scanned nothing under {HOST}"
     modules = {_module_name(py): py for py in files}
 

@@ -1,7 +1,7 @@
 import ast
 import sys
 
-from tests.guest.loader import GUEST_CLI, load
+from tests.engine.cli.loader import GUEST_CLI, load
 
 
 def test_the_guest_cli_imports_only_the_standard_library():

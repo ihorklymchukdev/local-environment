@@ -110,3 +110,14 @@ def test_a_logs_failure_reaches_the_caller_with_the_guests_stderr(seam):
         client.logs("blog")
     assert excinfo.value.code == "logs_unavailable"
     assert "no such service: web" in str(excinfo.value)
+
+
+def test_the_connect_step_accepts_the_real_agent(seam):
+    # Pins the contract: /health carries an api number this host speaks, and
+    # /version accepts the host's token.
+    from host.core import constants
+    from host.core.install import connect_step
+
+    client, _runner, _root = seam
+    assert client.health()["api"] in constants.SUPPORTED_API
+    assert connect_step(None, client=client) is None
