@@ -64,7 +64,8 @@ def run(steps, state, patch):
     """Run the real list, substituting the steps that would touch a real VM."""
     events = []
     stubbed = [s if s.name not in patch else type(s)(
-        s.name, patch[s.name], always_run=s.always_run, action=s.action)
+        s.name, patch[s.name], always_run=s.always_run, action=s.action,
+        label=s.label, progress=s.progress)
         for s in steps]
     run_install(stubbed, state, events.append)
     return events
@@ -74,6 +75,14 @@ def test_step_names_and_order_match_the_spec(tmp_path):
     names = [s.name for s in build(FakeProvider(), tmp_path)]
     assert names == ["preflight", "remediate", "reboot_gate", "fetch_image",
                      "create_vm", "bootstrap", "connect", "verify", "finish"]
+
+
+def test_fetch_image_is_built_as_a_progress_step(tmp_path):
+    # The only step long enough to need a fraction. Asserted directly here
+    # rather than left to be caught only by the emitter's argument count.
+    steps = {s.name: s for s in build(FakeProvider(), tmp_path)}
+    assert steps["fetch_image"].progress is True
+    assert all(s.progress is False for name, s in steps.items() if name != "fetch_image")
 
 
 def test_rootfs_is_set_outside_the_download_step(tmp_path):
@@ -86,7 +95,7 @@ def test_rootfs_is_set_outside_the_download_step(tmp_path):
 
     provider = FakeProvider(exists=False)
     steps = build(provider, tmp_path)
-    run(steps, state, {"fetch_image": lambda: None, "bootstrap": lambda: None,
+    run(steps, state, {"fetch_image": lambda emit: None, "bootstrap": lambda: None,
                        "connect": lambda: None, "verify": lambda: None})
 
     assert provider.rootfs == tmp_path / "cache" / "ubuntu-24.04.4-wsl-amd64.wsl"
@@ -100,7 +109,7 @@ def test_the_proving_steps_run_again_on_a_re_run(tmp_path):
     state = InstallState(tmp_path / "state.json")
     provider = FakeProvider()
     ran = []
-    patch = {"fetch_image": lambda: None,
+    patch = {"fetch_image": lambda emit: None,
              "bootstrap": lambda: None,
              "connect": lambda: ran.append("connect"),
              "verify": lambda: ran.append("verify"),
@@ -122,7 +131,7 @@ def test_finish_names_the_install_location_and_the_next_command(tmp_path):
     state = InstallState(tmp_path / "state.json")
     provider = FakeProvider()
     events = run(build(provider, tmp_path), state,
-                 {"fetch_image": lambda: None, "bootstrap": lambda: None,
+                 {"fetch_image": lambda emit: None, "bootstrap": lambda: None,
                   "connect": lambda: None, "verify": lambda: None})
     finish = next(e for e in events if e.step == "finish" and e.status == "done")
     assert provider.location in finish.message
@@ -168,7 +177,7 @@ def test_a_host_with_nothing_to_turn_on_gets_no_remediation_or_restart(tmp_path)
 def test_a_failure_carries_a_suggested_action_not_just_the_raw_error(tmp_path):
     state = InstallState(tmp_path / "state.json")
 
-    def boom():
+    def boom(emit):
         raise OSError("<urlopen error [Errno 11001] getaddrinfo failed>")
 
     with pytest.raises(InstallError) as excinfo:
@@ -202,7 +211,7 @@ def test_a_vm_destroyed_outside_setup_is_rebuilt_on_a_re_run(tmp_path):
     provider = FakeProvider(exists=False)
     ran = []
     events = run(build(provider, tmp_path), state,
-                 {"fetch_image": lambda: ran.append("fetch_image"),
+                 {"fetch_image": lambda emit: ran.append("fetch_image"),
                   "bootstrap": lambda: ran.append("bootstrap"),
                   "connect": lambda: None, "verify": lambda: None})
 
