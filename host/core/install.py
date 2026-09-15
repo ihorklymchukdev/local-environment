@@ -351,6 +351,10 @@ _ACTIONS = {
     "fetch_image": "The Linux image could not be downloaded — the internet "
                    "connection was unavailable. Run setup again and the download "
                    "continues from where it stopped.",
+    "install_runtime": "Lima could not be downloaded — the internet connection "
+                       "was unavailable, or the download did not match its "
+                       "checksum. Run setup again; the download continues from "
+                       "where it stopped.",
     "create_vm": "The virtual machine could not be created. Restart the computer, "
                  "make sure there is at least 10 GB free, and run setup again.",
     "bootstrap": "Omelet could not be installed inside the virtual machine. The "
@@ -395,6 +399,13 @@ def default_steps(provider, *, cache_dir, template_dir: Path, domain,
                     label=label, progress=progress)
 
     steps = [step("preflight", lambda: preflight_step(provider))]
+    # What the VM platform itself needs, which on macOS is Lima. None on
+    # Windows, where wsl.exe is part of the OS -- the same shape as image():
+    # the step is absent rather than present and skipped.
+    runtime = provider.runtime()
+    if runtime is not None:
+        steps.append(step("install_runtime", runtime.run, always_run=True,
+                          label=runtime.label, progress=True))
     # Only where the host OS has features setup can turn on. macOS ships its
     # virtualization framework, so there is nothing to enable and no restart to
     # wait for, and a step list that showed both would be describing Windows.

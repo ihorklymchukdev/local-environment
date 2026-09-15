@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -42,6 +42,18 @@ class Diagnosis:
     @property
     def fixable(self) -> list[CheckResult]:
         return [c for c in self.blocking if c.remedy is not None]
+
+
+@dataclass(frozen=True)
+class Runtime:
+    """A program the VM platform needs that setup installs for the user.
+
+    `None` from `provider.runtime()` means the platform ships it -- wsl.exe is
+    part of Windows. A value means one step, named by `label`, calling `run`
+    with the installer's fraction emitter.
+    """
+    label: str
+    run: Callable[[Callable[[int, int], None] | None], None]
 
 
 @runtime_checkable

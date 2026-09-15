@@ -5,11 +5,13 @@ from __future__ import annotations
 # (vz, rosetta, port forwarding) must be confirmed on an Apple Silicon host.
 
 import os
+import platform
 import shutil
 import subprocess
 from pathlib import Path
 
-from ..core.provider import Completed, Diagnosis, CheckResult
+from . import lima_install
+from ..core.provider import Completed, Diagnosis, CheckResult, Runtime
 
 LOOPBACK = "127.0.0.1"
 
@@ -22,15 +24,28 @@ LOOPBACK = "127.0.0.1"
 BREW_PREFIXES = ("/opt/homebrew/bin", "/usr/local/bin")
 
 
+def default_data_root() -> Path:
+    """Everything the host keeps for itself on this platform: the VM directory,
+    the download cache and the managed Lima. The single literal -- the provider
+    factory's default_install_dir() is derived from it, so the two cannot
+    disagree about where setup put limactl."""
+    return Path.home() / ".local" / "share" / "omelet"
+
+
 def find_limactl(name: str = "limactl", *, which=shutil.which,
-                 prefixes=BREW_PREFIXES) -> str:
+                 prefixes=BREW_PREFIXES, managed: Path | None = None) -> str:
     """Absolute path to limactl, or `name` unchanged if it was not found.
 
-    Returning the name rather than None keeps the not-installed case in one
-    place: `is_supported()` reports it, with the instruction to install Lima.
+    The managed copy wins whenever it exists: setup installs a pinned version,
+    and every assumption LimaProvider makes about Lima's on-disk layout is an
+    assumption about that version. A user's Homebrew Lima is never removed,
+    never upgraded and never used once ours is there -- the fallback below
+    exists for one case, a source checkout that has never run setup.
     """
     if os.sep in name:
         return name             # an explicit path: a test, or a bundled copy
+    if managed is not None and os.access(managed, os.X_OK):
+        return str(managed)
     found = which(name)
     if found:
         return found
@@ -48,12 +63,19 @@ def _default_runner(argv):
 class LimaProvider:
     def __init__(self, name="omelet-vm", config: Path | None = None,
                  limactl="limactl", runner=_default_runner,
-                 lima_home: Path | None = None):
+                 lima_home: Path | None = None, data_root: Path | None = None,
+                 mac_ver=None):
         self.name = name
         self.config = Path(config) if config else None
         self.limactl = limactl
         self._run = runner
         self.lima_home = Path(lima_home) if lima_home else Path.home() / ".lima"
+        self.data_root = Path(data_root) if data_root else default_data_root()
+        # Injectable for the same reason Wsl2Provider's `facts` is: platform.mac_ver()
+        # returns ('', ..., ...) on the Windows host this suite mostly runs on, so a
+        # test exercising preflight()/is_supported() needs a real version to check
+        # the >= 13 gate against.
+        self._mac_ver = mac_ver or platform.mac_ver
 
     def _spawn(self, argv: list[str]) -> Completed:
         p = self._run(argv)
@@ -77,11 +99,31 @@ class LimaProvider:
                            + (f": {detail}" if detail else "."))
 
     def is_supported(self) -> Diagnosis:
+        """What `omelet doctor` prints: the whole truth about this machine.
+
+        Wider than preflight() on purpose, and the reverse of the WSL2
+        provider, where preflight is the richer of the two. Setup installs Lima
+        itself now, so preflight must not stop for it -- but a user running
+        doctor still deserves to be told it is missing, and told that setup is
+        what fixes it.
+        """
+        checks = list(self._os_checks())
         from shutil import which
-        present = which(self.limactl) is not None
-        return Diagnosis([CheckResult(
-            "limactl installed", present,
-            None if present else "install Lima (brew install lima) or bundle limactl")])
+        present = os.access(self.limactl, os.X_OK) or which(self.limactl) is not None
+        checks.append(CheckResult(
+            f"Lima {lima_install.LIMA_VERSION}", present,
+            None if present else "run Omelet setup, which installs Lima for you"))
+        return Diagnosis(checks)
+
+    def _os_checks(self):
+        release = self._mac_ver()[0]
+        major = int(release.split(".")[0]) if release.split(".")[0].isdigit() else 0
+        # vz, which omelet.yaml asks for, is macOS 13+. The .pkg refuses to
+        # install below that; a source checkout has nothing stopping it.
+        yield CheckResult(
+            f"macOS 13 or newer (found {release or 'unknown'})", major >= 13,
+            None if major >= 13 else
+            "Omelet needs macOS 13 or newer; this Mac cannot run it")
 
     def exists(self) -> bool:
         out = self._cmd(["list", "--quiet"]).stdout
@@ -156,7 +198,14 @@ class LimaProvider:
         return []
 
     def preflight(self) -> Diagnosis:
-        return self.is_supported()
+        """What setup gates on before it installs anything. Only facts about
+        this computer that no step can change."""
+        return Diagnosis(list(self._os_checks()))
+
+    def runtime(self) -> Runtime | None:
+        return Runtime(f"Installing Lima {lima_install.LIMA_VERSION}",
+                       lambda emit: lima_install.install(self.data_root,
+                                                         on_progress=emit))
 
     def apply_remedy(self, remedy: str) -> None:
         raise ValueError(f"unknown remedy: {remedy}")

@@ -1,5 +1,7 @@
 from pathlib import Path
-from host.providers.lima import LimaProvider
+from host.providers.lima import LimaProvider, find_limactl
+import host.providers.lima_install as lima_install
+from host.core.provider import Runtime
 
 
 class FakeRunner:
@@ -16,9 +18,14 @@ class FakeRunner:
         return R()
 
 
-def make(runner):
+def _mac(version="14.5"):
+    return lambda: (version, ("", "", ""), "arm64")
+
+
+def make(runner, mac_ver=None):
     return LimaProvider(name="omelet-vm", config=Path("/tmp/omelet.yaml"),
-                        limactl="limactl", runner=runner)
+                        limactl="limactl", runner=runner,
+                        mac_ver=mac_ver or _mac())
 
 
 def test_exec_uses_limactl_shell():
@@ -127,5 +134,75 @@ def test_a_resolved_path_still_satisfies_the_installed_check(tmp_path):
     binary.write_text("#!/bin/sh\n")
     binary.chmod(0o755)
 
-    provider = LimaProvider(limactl=str(binary), runner=FakeRunner())
+    provider = LimaProvider(limactl=str(binary), runner=FakeRunner(), mac_ver=_mac())
     assert provider.is_supported().ok
+
+
+# --- installing Lima instead of dead-ending on a missing one ---
+
+
+def test_find_limactl_prefers_the_managed_copy_over_homebrew(tmp_path):
+    managed = tmp_path / "lima" / "bin" / "limactl"
+    managed.parent.mkdir(parents=True)
+    managed.write_text("#!/bin/sh\n")
+    managed.chmod(0o755)
+    found = find_limactl(which=lambda name: "/opt/homebrew/bin/limactl",
+                         managed=managed)
+    assert found == str(managed)
+
+
+def test_find_limactl_falls_back_to_the_path_before_setup_has_run(tmp_path):
+    # A source checkout that has never run setup has no managed copy; a
+    # developer's brew install is what makes `omelet doctor` answerable there.
+    missing = tmp_path / "lima" / "bin" / "limactl"
+    found = find_limactl(which=lambda name: "/opt/homebrew/bin/limactl",
+                         managed=missing)
+    assert found == "/opt/homebrew/bin/limactl"
+
+
+def test_preflight_no_longer_dead_ends_on_a_missing_lima():
+    # Installing Lima is setup's job now. A preflight that stops for it is
+    # setup refusing to do its own work.
+    diagnosis = make(FakeRunner()).preflight()
+    assert diagnosis.dead_ends == []
+
+
+def test_preflight_refuses_a_mac_too_old_for_the_virtualization_framework():
+    # vz, which omelet.yaml asks Lima for, is macOS 13+.
+    provider = LimaProvider(name="omelet-vm", runner=FakeRunner(),
+                            mac_ver=_mac("12.7"))
+    assert provider.preflight().dead_ends
+
+
+def test_doctor_still_reports_a_missing_lima_and_names_setup_as_the_fix():
+    provider = LimaProvider(name="omelet-vm", limactl="/nowhere/limactl",
+                            runner=FakeRunner(), data_root=Path("/nowhere"),
+                            mac_ver=_mac())
+    diagnosis = provider.is_supported()
+    lima_check = next(c for c in diagnosis.checks if "Lima" in c.label)
+    assert not lima_check.ok
+    assert "setup" in lima_check.fix.lower()
+    assert "brew" not in lima_check.fix.lower()
+
+
+def test_runtime_installs_into_the_providers_data_root(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_install(root, *, on_progress=None):
+        seen["root"] = root
+        seen["on_progress"] = on_progress
+        return root / "lima" / "bin" / "limactl"
+
+    monkeypatch.setattr(lima_install, "install", fake_install)
+    provider = LimaProvider(name="omelet-vm", runner=FakeRunner(), data_root=tmp_path)
+    runtime = provider.runtime()
+    assert isinstance(runtime, Runtime)
+    assert "Lima" in runtime.label
+    emit = lambda done, total: None
+    runtime.run(emit)
+    assert seen == {"root": tmp_path, "on_progress": emit}
+
+
+def test_the_wsl2_provider_has_nothing_to_install():
+    from host.providers.wsl2 import Wsl2Provider
+    assert Wsl2Provider(arch="amd64").runtime() is None

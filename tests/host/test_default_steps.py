@@ -7,7 +7,7 @@ import pytest
 
 from host.core.images import Image
 from host.core.install import InstallError, InstallState, default_steps, run_install
-from host.core.provider import CheckResult, Diagnosis
+from host.core.provider import CheckResult, Diagnosis, Runtime
 
 IMAGE = Image("https://example.invalid/ubuntu-24.04.4-wsl-amd64.wsl", "0" * 64)
 
@@ -16,6 +16,7 @@ class FakeProvider:
     location = r"C:\Users\you\AppData\Local\Omelet\vm"
     terminal = "PowerShell"
     remediable = True
+    runtime_value = None
 
     def __init__(self, *, exists=True, reboot=False):
         self.rootfs = None
@@ -30,6 +31,7 @@ class FakeProvider:
     def register_resume(self, exe): self.resumed_with = exe
     def image(self): return IMAGE
     def exists(self): return self._exists
+    def runtime(self): return self.runtime_value
 
     def create(self):
         if self.rootfs is None:
@@ -172,6 +174,31 @@ def test_a_host_with_nothing_to_turn_on_gets_no_remediation_or_restart(tmp_path)
     names = [s.name for s in build(SelfImagingProvider(), tmp_path)]
     assert names == ["preflight", "create_vm", "bootstrap", "connect",
                      "verify", "finish"]
+
+
+def test_a_provider_with_a_runtime_gets_an_install_step_after_preflight(tmp_path):
+    provider = SelfImagingProvider()
+    calls = []
+    provider.runtime_value = Runtime("Installing Lima", lambda emit: calls.append(emit))
+    names = [s.name for s in build(provider, tmp_path)]
+    assert names[:2] == ["preflight", "install_runtime"]
+    assert "fetch_image" not in names
+
+
+def test_the_install_step_carries_the_providers_own_label(tmp_path):
+    provider = SelfImagingProvider()
+    provider.runtime_value = Runtime("Installing Lima", lambda emit: None)
+    step = next(s for s in build(provider, tmp_path) if s.name == "install_runtime")
+    assert step.label == "Installing Lima"
+    assert step.progress is True
+    # Never recorded as done: what it produces is a directory a user can
+    # delete, and re-deriving it costs one file read.
+    assert step.always_run is True
+    assert step.action, "a failed download needs a sentence telling the user what to do"
+
+
+def test_a_provider_with_no_runtime_gets_no_install_step(tmp_path):
+    assert "install_runtime" not in [s.name for s in build(FakeProvider(), tmp_path)]
 
 
 def test_a_failure_carries_a_suggested_action_not_just_the_raw_error(tmp_path):

@@ -5,6 +5,10 @@ rosetta:
 images:
   - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
     arch: "aarch64"
+  # distribution.xml stamps the building machine's arch into hostArchitectures,
+  # so an Intel build is a supported artifact and needs an image it can boot.
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
 cpus: 4
 memory: "4GiB"
 ssh:

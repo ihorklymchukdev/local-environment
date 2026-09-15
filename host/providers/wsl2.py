@@ -338,6 +338,11 @@ class Wsl2Provider:
     def image(self):
         return WSL_IMAGES[self._arch]
 
+    def runtime(self):
+        """Nothing to install: wsl.exe ships with Windows, and what it needs
+        turned on is `remediable` above, not a download."""
+        return None
+
     @property
     def location(self) -> Path:
         """Where `wsl --import` put the distro's vhdx."""

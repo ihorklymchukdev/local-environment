@@ -28,7 +28,8 @@ LIFECYCLE_SURFACE = {
 # asking what platform it is on. They are still a contract every provider owes,
 # and nothing noticed that LimaProvider owed two of them and had neither --
 # `omelet setup` on macOS died with an AttributeError before its first step.
-INSTALL_SURFACE = {"image", "register_resume", "location", "terminal", "remediable"}
+INSTALL_SURFACE = {"image", "register_resume", "location", "terminal",
+                   "remediable", "runtime"}
 
 
 def _protocol_methods() -> set[str]:

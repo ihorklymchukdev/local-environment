@@ -28,6 +28,7 @@ class StubProvider:
     def exec(self, argv, *, root=False): return Completed(0, "", "")
     def destroy(self): pass
     def image(self): return Image("http://example.invalid/img.wsl", "0" * 64)
+    def runtime(self): return None
 
 
 class FailingDestroyProvider(StubProvider):
