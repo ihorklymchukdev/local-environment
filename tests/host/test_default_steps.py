@@ -13,6 +13,10 @@ IMAGE = Image("https://example.invalid/ubuntu-24.04.4-wsl-amd64.wsl", "0" * 64)
 
 
 class FakeProvider:
+    location = r"C:\Users\you\AppData\Local\Omelet\vm"
+    terminal = "PowerShell"
+    remediable = True
+
     def __init__(self, *, exists=True, reboot=False):
         self.rootfs = None
         self._exists = exists
@@ -33,13 +37,25 @@ class FakeProvider:
         self.created = True
 
 
+class SelfImagingProvider(FakeProvider):
+    """A provider on a host that needs nothing turned on and fetches its own
+    guest image -- Lima. The install list must not contain the steps that would
+    do either, rather than showing steps that quietly do nothing."""
+
+    location = "/Users/you/.lima/omelet-vm"
+    terminal = "Terminal"
+    remediable = False
+
+    def image(self):
+        return None
+
+
 def build(provider, tmp_path, **overrides):
     kwargs = dict(
         cache_dir=tmp_path / "cache",
         template_dir=tmp_path / "template",
         domain="127-0-0-1.sslip.io",
         exe_path=r"C:\Apps\Omelet\setup.exe",
-        install_dir=tmp_path / "vm",
     )
     return default_steps(provider, **{**kwargs, **overrides})
 
@@ -104,13 +120,49 @@ def test_the_proving_steps_run_again_on_a_re_run(tmp_path):
 
 def test_finish_names_the_install_location_and_the_next_command(tmp_path):
     state = InstallState(tmp_path / "state.json")
-    events = run(build(FakeProvider(), tmp_path), state,
+    provider = FakeProvider()
+    events = run(build(provider, tmp_path), state,
                  {"fetch_image": lambda: None, "bootstrap": lambda: None,
                   "connect": lambda: None, "verify": lambda: None})
     finish = next(e for e in events if e.step == "finish" and e.status == "done")
-    assert str(tmp_path / "vm") in finish.message
+    assert provider.location in finish.message
     assert "omelet up" in finish.message
     assert "succe" in finish.message.lower()
+
+
+def test_finish_names_the_place_the_vm_really_is_and_this_platform_s_terminal(tmp_path):
+    # The message used to be written for Windows on both platforms: it named the
+    # host's own install dir, which on macOS is an empty folder Lima never
+    # touches, and told a Mac user to open PowerShell.
+    state = InstallState(tmp_path / "state.json")
+    provider = SelfImagingProvider()
+    events = run(build(provider, tmp_path), state,
+                 {"bootstrap": lambda: None, "connect": lambda: None,
+                  "verify": lambda: None})
+    finish = next(e for e in events if e.step == "finish" and e.status == "done")
+    assert "/Users/you/.lima/omelet-vm" in finish.message
+    assert "open Terminal" in finish.message
+    assert "PowerShell" not in finish.message
+
+
+def test_a_provider_that_fetches_its_own_image_gets_no_download_step(tmp_path):
+    # Lima downloads the image named in omelet.yaml itself. Keeping fetch_image
+    # in the list would mean calling provider.image() for a URL nobody reads --
+    # and LimaProvider had no image() at all, so `omelet setup` on macOS died
+    # with an AttributeError before its first step ran.
+    provider = SelfImagingProvider()
+    names = [s.name for s in build(provider, tmp_path)]
+    assert "fetch_image" not in names
+    assert provider.rootfs is None, "there is no rootfs for the host to place"
+
+
+def test_a_host_with_nothing_to_turn_on_gets_no_remediation_or_restart(tmp_path):
+    # The setup window listed every step in this list. On a Mac it therefore
+    # showed "Turning on Windows features" and "Restart needed", both of which
+    # would have been skipped and neither of which exists on that platform.
+    names = [s.name for s in build(SelfImagingProvider(), tmp_path)]
+    assert names == ["preflight", "create_vm", "bootstrap", "connect",
+                     "verify", "finish"]
 
 
 def test_a_failure_carries_a_suggested_action_not_just_the_raw_error(tmp_path):

@@ -81,6 +81,29 @@ def test_install_brings_the_stack_up_with_compose_not_an_inline_container():
     assert not any("traefik.yml" in l for l in commands)
 
 
+def test_a_missing_architecture_is_not_reported_as_a_network_problem():
+    # The failure an Apple Silicon user hits first: the agent image is published
+    # for amd64 only, the arm64 VM cannot pull it, and the daemon says "no
+    # matching manifest". Reporting that as "the registry was unreachable.
+    # Check the network connection or proxy" points at the one part of the
+    # system that is working.
+    text = INSTALL.read_text()
+    assert "no matching manifest" in text and "no match for platform" in text, \
+        "both spellings the daemon uses must be matched"
+    arch_branch = text.split("no matching manifest")[1].split("else")[0]
+    assert "architecture" in arch_branch
+    assert "proxy" not in arch_branch, \
+        "an architecture failure must not send the user to their network settings"
+    assert "uname -m" in arch_branch, "say which architecture was asked for"
+
+
+def test_the_pull_still_shows_its_progress_while_being_recorded():
+    # Captured output alone would leave a multi-minute download silent; `tee`
+    # is what keeps both.
+    text = INSTALL.read_text()
+    assert "pull 2>&1 | tee" in text
+
+
 def test_install_always_pulls_before_bringing_the_stack_up():
     # Always pulling is the delivery decision: it is how an agent update reaches
     # an already-bootstrapped VM. `up -d` alone would keep running a stale image.

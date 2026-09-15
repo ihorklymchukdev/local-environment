@@ -110,11 +110,27 @@ chmod 640 /opt/omelet/agent.token
 # Always pull: this is how an agent update reaches an already-provisioned VM,
 # so both the first install and every update need the network.
 install -m 644 "$ENGINE_DIR/stack.yml" /opt/omelet/stack.yml
-if ! /usr/bin/docker compose -f /opt/omelet/stack.yml pull; then
-  echo "could not pull the Omelet images: the registry was unreachable." >&2
-  echo "Check the network connection or proxy and run setup again." >&2
+# The output is kept as well as shown. An image with no build for this VM's
+# architecture and a registry that cannot be reached fail the same way here and
+# differ only in the daemon's wording -- and the two need opposite things from
+# the user. Reporting "check your network and proxy" to someone whose registry
+# answered perfectly sends them to inspect the one part that is working; on
+# Apple Silicon, where an amd64-only image is the common case, that is the first
+# thing they hit.
+PULL_LOG="$(mktemp)"
+if ! /usr/bin/docker compose -f /opt/omelet/stack.yml pull 2>&1 | tee "$PULL_LOG"; then
+  if grep -qiE 'no matching manifest|no match for platform' "$PULL_LOG"; then
+    echo "could not pull the Omelet images: one of them is not published for" >&2
+    echo "this machine's architecture ($(uname -m)). The registry answered" >&2
+    echo "fine -- that image needs a build for this architecture." >&2
+  else
+    echo "could not pull the Omelet images: the registry was unreachable." >&2
+    echo "Check the network connection or proxy and run setup again." >&2
+  fi
+  rm -f "$PULL_LOG"
   exit 1
 fi
+rm -f "$PULL_LOG"
 /usr/bin/docker compose -f /opt/omelet/stack.yml up -d
 # The agent reads its token once, at startup, and `up -d` leaves an unchanged
 # container running.

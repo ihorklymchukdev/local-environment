@@ -1,11 +1,57 @@
-# Lima / macOS verification — BLOCKED, not run
+# Lima / macOS verification — still BLOCKED on the VM
 
-**Status: not verified.** Phase 2 Task 5 requires a real Apple Silicon machine and
-none was available. No part of `host/providers/lima.py` or `host/providers/omelet.yaml`
-has ever been executed. **The UNVERIFIED banners in both files stay until this page
-records an actual run.**
+**Status: the VM has never been created.** `LimaProvider.create/start/stop/destroy/
+exec/forward` and every line of `host/providers/omelet.yaml` remain unexecuted, and
+**the UNVERIFIED banners in both files stay until this page records a real VM.**
 
-Nothing below is a result. It is the run that has to happen.
+What has now run on a real Apple Silicon Mac is recorded under
+"2026-09-15" below — steps 1 and 2 of `lima-spike-checklist.md`, and nothing past
+them. Everything in the next section is still the run that has to happen.
+
+## 2026-09-15 — steps 1 and 2, on macOS 26.6.2 (build 25G83), arm64
+
+Run from a source checkout under Python 3.13.15, with Lima **not** installed.
+
+- **Step 1, the suite: 437 passed, 7 failed.** None of the seven is a product
+  bug on the host path, and none involves `LimaProvider`:
+  - `tests/engine/test_install_agents.py` (4) and `tests/engine/test_get_sh.py`
+    (2) run the guest shell scripts *on the host*, where BSD `sed` and BSD `tar`
+    are not the GNU tools those scripts are written against
+    (`sed: 1: "...": invalid command code v`). The scripts themselves only ever
+    run inside Ubuntu. This is the test harness being Linux-only, not the
+    engine.
+  - `tests/agent/test_health.py::test_proc_net_addresses_decode_byte_order_correctly`
+    is a Python version difference, not a platform one: 3.13's `ipaddress`
+    renders an IPv4-mapped address as `::ffff:127.0.0.1` where the expectation
+    says `::ffff:7f00:1`. The decoder is right; the literal in the test is
+    version-specific.
+
+  Both classes would fail the same way on a Linux dev machine with Python 3.13,
+  so "the suite is green" currently means "on Windows, on 3.12". Worth fixing
+  before macOS is a supported dev platform; neither blocks the spike.
+- **Step 2, `omelet doctor`:** one check, `limactl installed`, failing with
+  `install Lima (brew install lima) or bundle limactl`, exit 1. Correct, and as
+  low a bar as the checklist says it is.
+- **`omelet setup --headless` reached its first step**, which it could not do
+  before: `default_steps` called `provider.image()` and `LimaProvider` had no
+  such method, so setup died with an `AttributeError` before preflight ran. It
+  now stops at preflight with the Lima instruction above. See
+  `docs/macos-install-test-matrix.md` case 4.
+
+Steps 3 to 5 — VM create, end to end, lifecycle — are untouched: they need a
+multi-gigabyte image download that was not run. **Lima 2.2.0 is now installed on
+this machine** (`/opt/homebrew/bin/limactl`), so the spike is no longer blocked
+on its prerequisite; `limactl start` has still never been called.
+
+One finding came out of installing it, from the setup window rather than the
+CLI: an app launched by LaunchServices is given
+`PATH=/usr/bin:/bin:/usr/sbin:/sbin`, which contains neither Homebrew prefix, so
+`is_supported()` reported Lima missing on a machine that had just installed it.
+`lima.find_limactl` now falls back to `/opt/homebrew/bin` and `/usr/local/bin`
+and the factory hands the provider an absolute path. Two things follow for the
+run that is still pending: the same blindness applies to **anything else the
+host shells out to by name** on macOS, and `limactl` itself will run with that
+minimal PATH — whether it needs more is one of the unknowns step 3 answers.
 
 ## What Phase 2 changed on the Lima side, unverified
 

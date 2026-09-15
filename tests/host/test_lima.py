@@ -78,3 +78,54 @@ def test_the_lima_config_forwards_exactly_the_ports_the_host_dials():
         r"guestPort:\s*(\d+)\s*\n\s*hostPort:\s*(\d+)", config)}
     assert pairs == {(constants.EDGE_PORT, constants.EDGE_PORT),
                      (constants.AGENT_PORT, constants.AGENT_PORT)}
+
+
+# --- finding limactl when there is no shell PATH ---
+#
+# The setup window is an app, and an app launched from Finder is started by
+# LaunchServices with PATH=/usr/bin:/bin:/usr/sbin:/sbin. Homebrew is on
+# neither prefix, so `shutil.which` alone reported Lima missing on a machine
+# where `brew install lima` had just succeeded.
+
+
+def test_limactl_is_found_on_the_path_when_there_is_one():
+    from host.providers.lima import find_limactl
+    assert find_limactl(which=lambda name: "/somewhere/bin/limactl") \
+        == "/somewhere/bin/limactl"
+
+
+def test_limactl_is_found_in_the_homebrew_prefix_without_a_path(tmp_path):
+    from host.providers.lima import find_limactl
+
+    brew = tmp_path / "homebrew" / "bin"
+    brew.mkdir(parents=True)
+    binary = brew / "limactl"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+
+    assert find_limactl(which=lambda name: None, prefixes=(str(brew),)) == str(binary)
+
+
+def test_a_missing_limactl_comes_back_as_the_bare_name(tmp_path):
+    # Not None: is_supported() is the one place that reports Lima missing, and
+    # it reports it by failing to resolve this value.
+    from host.providers.lima import find_limactl
+    assert find_limactl(which=lambda name: None, prefixes=(str(tmp_path),)) == "limactl"
+
+
+def test_an_explicit_path_is_never_second_guessed():
+    from host.providers.lima import find_limactl
+    assert find_limactl("/opt/omelet/limactl", which=lambda name: "/usr/bin/limactl") \
+        == "/opt/omelet/limactl"
+
+
+def test_a_resolved_path_still_satisfies_the_installed_check(tmp_path):
+    # is_supported() runs shutil.which over whatever it was handed, and which()
+    # accepts an absolute path by checking that file directly -- so resolving
+    # the binary must not turn the check into a permanent failure.
+    binary = tmp_path / "limactl"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+
+    provider = LimaProvider(limactl=str(binary), runner=FakeRunner())
+    assert provider.is_supported().ok

@@ -10,6 +10,10 @@ runner = CliRunner()
 
 
 class StubProvider:
+    location = r"C:\Users\you\AppData\Local\Omelet\vm"
+    terminal = "PowerShell"
+    remediable = True
+
     def __init__(self, diagnosis=None, reboot=False):
         self._diagnosis = diagnosis or Diagnosis([CheckResult("all good", True)])
         self._reboot = reboot

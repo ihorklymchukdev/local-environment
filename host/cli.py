@@ -278,7 +278,6 @@ def setup(resume: bool = typer.Option(False, "--resume"),
         template_dir=VERIFY_TEMPLATE,
         domain=constants.DEFAULT_DOMAIN,
         exe_path=_sys.executable,
-        install_dir=default_install_dir(),
     )
 
     def report(progress: Progress):

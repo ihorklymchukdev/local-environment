@@ -337,3 +337,15 @@ class Wsl2Provider:
 
     def image(self):
         return WSL_IMAGES[self._arch]
+
+    @property
+    def location(self) -> Path:
+        """Where `wsl --import` put the distro's vhdx."""
+        return self.install_dir
+
+    # Named for the user, in the finish message.
+    terminal = "PowerShell"
+
+    # WSL2 and VirtualMachinePlatform are Windows features setup can turn on,
+    # and turning them on needs a restart.
+    remediable = True

@@ -4,12 +4,41 @@ from __future__ import annotations
 # macOS in this session. Command construction is unit-tested; live behavior
 # (vz, rosetta, port forwarding) must be confirmed on an Apple Silicon host.
 
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
 from ..core.provider import Completed, Diagnosis, CheckResult
 
 LOOPBACK = "127.0.0.1"
+
+# Homebrew installs limactl here and puts neither prefix on the PATH an app
+# launched from Finder is given -- LaunchServices starts one with
+# /usr/bin:/bin:/usr/sbin:/sbin, and a GUI process inherits no shell profile.
+# `which limactl` answering yes in a terminal is therefore not the question the
+# setup window is asking, which is how it came to tell a user who had just run
+# `brew install lima` to install Lima.
+BREW_PREFIXES = ("/opt/homebrew/bin", "/usr/local/bin")
+
+
+def find_limactl(name: str = "limactl", *, which=shutil.which,
+                 prefixes=BREW_PREFIXES) -> str:
+    """Absolute path to limactl, or `name` unchanged if it was not found.
+
+    Returning the name rather than None keeps the not-installed case in one
+    place: `is_supported()` reports it, with the instruction to install Lima.
+    """
+    if os.sep in name:
+        return name             # an explicit path: a test, or a bundled copy
+    found = which(name)
+    if found:
+        return found
+    for prefix in prefixes:
+        candidate = os.path.join(prefix, name)
+        if os.access(candidate, os.X_OK):
+            return candidate
+    return name
 
 
 def _default_runner(argv):
@@ -134,3 +163,34 @@ class LimaProvider:
 
     def reboot_required(self) -> bool:
         return False   # no OS features to enable; Lima needs no restart
+
+    # Nothing on macOS to turn on: the Virtualization framework is part of the
+    # OS, so setup has no remediation step and no restart to gate on. Both
+    # steps are dropped from the list rather than shown and skipped -- a Mac
+    # user watching "Turning on Windows features" learns the wrong thing about
+    # what this program is doing.
+    remediable = False
+
+    def register_resume(self, exe_path: str) -> None:
+        """Nothing to resume: `reboot_required()` is always False here, so the
+        gate never raises and setup never has to survive a restart."""
+
+    def image(self):
+        """No rootfs for the host to fetch.
+
+        `images:` in omelet.yaml names the guest image and `limactl start`
+        downloads and caches it, so the host has nothing to download and the
+        install list drops its download step. None is the answer, not a URL
+        nobody reads -- see `default_steps`.
+        """
+        return None
+
+    @property
+    def location(self) -> Path:
+        """Where limactl keeps this VM. Not the host's install dir: Lima owns
+        the disk image and its config, and `limactl delete` is what removes
+        them."""
+        return self.lima_home / self.name
+
+    # Named for the user, in the finish message.
+    terminal = "Terminal"

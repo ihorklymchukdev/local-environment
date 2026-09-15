@@ -296,12 +296,17 @@ def _teardown(client) -> None:
                 f"running.\n{e}") from e
 
 
-def finish_step(install_dir) -> str:
-    """The only step whose product is words. Every run must reach it."""
+def finish_step(location, terminal: str) -> str:
+    """The only step whose product is words. Every run must reach it.
+
+    Both values come from the provider: the VM does not live in the same place
+    on both platforms (Lima owns its own directory), and neither does the
+    terminal the user is being sent to.
+    """
     return (
         "Setup finished successfully.\n"
-        f"The virtual machine and its files are in: {install_dir}\n\n"
-        "To start a project, open PowerShell and run:\n\n"
+        f"The virtual machine and its files are in: {location}\n\n"
+        f"To start a project, open {terminal} and run:\n\n"
         "    omelet up <folder>\n\n"
         "where <folder> is the folder that holds your docker-compose.yml.")
 
@@ -329,14 +334,20 @@ _ACTIONS = {
 
 
 def default_steps(provider, *, cache_dir, template_dir: Path, domain,
-                  exe_path: str, install_dir) -> list[Step]:
+                  exe_path: str) -> list[Step]:
     from .download import fetch
 
+    # None when the VM platform fetches its own guest image -- Lima names it in
+    # omelet.yaml and limactl caches it. There is then no rootfs for the host to
+    # download and no download step to run, rather than a step that quietly does
+    # nothing.
     image = provider.image()
-    # Assigned here rather than inside fetch_image: that step is skipped on a
-    # resume or a re-run, and create_vm needs the path in every process.
-    rootfs = Path(cache_dir) / image.url.rsplit("/", 1)[-1]
-    provider.rootfs = rootfs
+    rootfs = None
+    if image is not None:
+        # Assigned here rather than inside fetch_image: that step is skipped on
+        # a resume or a re-run, and create_vm needs the path in every process.
+        rootfs = Path(cache_dir) / image.url.rsplit("/", 1)[-1]
+        provider.rootfs = rootfs
 
     def fetch_image():
         fetch(image, rootfs)
@@ -349,17 +360,24 @@ def default_steps(provider, *, cache_dir, template_dir: Path, domain,
     def step(name: str, run, *, always_run: bool = False) -> Step:
         return Step(name, run, always_run=always_run, action=_ACTIONS.get(name, ""))
 
-    return [
-        step("preflight", lambda: preflight_step(provider)),
-        step("remediate", lambda: remediate_step(provider)),
-        step("reboot_gate", gate),
-        # Only the three steps above may be remembered across runs: they are
-        # facts about this computer. Everything below is a fact about the VM,
-        # and each re-derives it cheaply -- fetch() returns on a matching
-        # digest, create() on an existing distro, bootstrap() on a matching
-        # guest marker -- so re-running them costs seconds and skipping them
-        # costs a WSL_E_DISTRO_NOT_FOUND minutes later.
-        step("fetch_image", fetch_image, always_run=True),
+    steps = [step("preflight", lambda: preflight_step(provider))]
+    # Only where the host OS has features setup can turn on. macOS ships its
+    # virtualization framework, so there is nothing to enable and no restart to
+    # wait for, and a step list that showed both would be describing Windows.
+    if provider.remediable:
+        steps += [
+            step("remediate", lambda: remediate_step(provider)),
+            step("reboot_gate", gate),
+        ]
+    # Only the steps above may be remembered across runs: they are facts about
+    # this computer. Everything below is a fact about the VM, and each
+    # re-derives it cheaply -- fetch() returns on a matching digest, create() on
+    # an existing distro, bootstrap() on a matching guest marker -- so re-running
+    # them costs seconds and skipping them costs a WSL_E_DISTRO_NOT_FOUND
+    # minutes later.
+    if image is not None:
+        steps.append(step("fetch_image", fetch_image, always_run=True))
+    steps += [
         step("create_vm", lambda: None if provider.exists() else provider.create(),
              always_run=True),
         step("bootstrap", lambda: _bootstrap(provider), always_run=True),
@@ -370,8 +388,10 @@ def default_steps(provider, *, cache_dir, template_dir: Path, domain,
             always_run=True),
         step("verify", lambda: verify_step(provider, template_dir, domain),
              always_run=True),
-        step("finish", lambda: finish_step(install_dir), always_run=True),
+        step("finish", lambda: finish_step(provider.location, provider.terminal),
+             always_run=True),
     ]
+    return steps
 
 
 def _bootstrap(provider, *, repair: bool = False) -> None:

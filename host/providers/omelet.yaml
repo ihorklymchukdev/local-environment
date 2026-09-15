@@ -7,6 +7,8 @@ images:
     arch: "aarch64"
 cpus: 4
 memory: "4GiB"
+ssh:
+    localPort: 39022
 disk: "60GiB"
 mounts: []
 # Only the two fixed ports live here. A user's distinct-port forward (a
