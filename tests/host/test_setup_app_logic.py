@@ -67,7 +67,7 @@ def test_there_is_a_glyph_for_every_status_run_install_can_report():
     assert Progress("x", "running").status in widgets.GLYPHS
 
 
-from host.core.install import Step
+from host.core.install import Progress, Step
 from host.setup_app import wizard
 
 
@@ -95,3 +95,29 @@ def test_the_label_table_has_no_entry_for_a_step_the_provider_names():
 
 def test_the_windows_only_steps_are_still_named_for_windows():
     assert wizard.LABELS["remediate"] == "Turning on Windows features"
+
+
+def test_the_finish_steps_done_message_moves_to_the_outcome_panel():
+    # run_install's real finish/done event carries the words for the last
+    # screen. Left in place, they'd double as a log line nobody asked to see,
+    # and the row itself would never learn its message-less counterpart --
+    # the actual bug this test guards was the row being skipped entirely.
+    event, message = wizard.split_finish_message(
+        Progress("finish", "done", "Setup finished successfully."))
+    assert event == Progress("finish", "done")
+    assert message == "Setup finished successfully."
+
+
+def test_the_finish_steps_running_event_is_untouched():
+    event, message = wizard.split_finish_message(Progress("finish", "running"))
+    assert event == Progress("finish", "running")
+    assert message is None
+
+
+def test_an_ordinary_steps_message_still_belongs_in_the_log():
+    # connect_step returns a sentence on its repair path; that must keep
+    # reaching the log, not get swept into the outcome panel.
+    progress = Progress("connect", "done", "reconnected")
+    event, message = wizard.split_finish_message(progress)
+    assert event == progress
+    assert message is None

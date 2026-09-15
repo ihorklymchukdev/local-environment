@@ -37,6 +37,25 @@ def step_label(step: Step) -> str:
     return step.label or LABELS.get(step.name, step.name)
 
 
+def split_finish_message(progress: Progress) -> tuple[Progress, str | None]:
+    """Pull the outcome-panel words off the finish step's `done` event.
+
+    That event's message is the whole point of the run and belongs on the
+    next screen, not scrolled into a log nobody opened -- but the row it
+    names still has to turn done like every other row, or the spinner glyph
+    `_list.tick()` was animating freezes there forever once the pump sees the
+    sentinel and stops calling tick(). Stripping the message and handing the
+    now-plain event back lets the caller run it through the same terminal-
+    event handling as everything else. Every other event, including finish's
+    own `running` event and every other step's `done` message (`connect_step`
+    has one on its repair path), passes through untouched -- those messages
+    still belong in the log.
+    """
+    if progress.step == "finish" and progress.status == "done":
+        return Progress(progress.step, progress.status), progress.message
+    return progress, None
+
+
 @dataclass(frozen=True)
 class Outcome:
     code: int
@@ -144,11 +163,9 @@ class WizardScreen(tk.Frame):
         self._bar.set(value)
 
     def _render(self, event: Progress) -> None:
-        # The finish step's product is words, and they belong on the next
-        # screen rather than scrolled away in a log nobody opened.
-        if event.step == "finish" and event.status == "done":
-            self._outcome = Outcome(0, event.message, tuple(self._log))
-            return
+        event, finish_message = split_finish_message(event)
+        if finish_message is not None:
+            self._outcome = Outcome(0, finish_message, tuple(self._log))
         label = step_label(self._step(event.step))
         if event.fraction is not None:
             self._set_fraction((self._done + event.fraction) / len(self._steps))
