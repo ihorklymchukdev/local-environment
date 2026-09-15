@@ -18,10 +18,16 @@ DATAS = [
 # reappears. Every dest mirrors the repo path its reader resolves from __file__,
 # so the bundle and a source checkout look identical.
 
+# setup_app is reached only through cli.setup()'s function-local import, so
+# PyInstaller's static analysis never sees it -- a bundle missing one of these
+# launches, shows a Dock icon, and dies on the first draw.
+HIDDEN = ["host.setup_app.app", "host.setup_app.wizard", "host.setup_app.status",
+          "host.setup_app.theme", "host.setup_app.widgets"]
+
 cli = Analysis(["../../host/cli.py"], pathex=["../.."], datas=DATAS,
-               hiddenimports=["host.setup_app.app"])
+               hiddenimports=HIDDEN)
 gui = Analysis(["setup_main.py"], pathex=["../.."], datas=DATAS,
-               hiddenimports=["host.setup_app.app"])
+               hiddenimports=HIDDEN)
 
 # The GUI executable comes first on purpose: BUNDLE takes CFBundleExecutable
 # from the first EXECUTABLE in the COLLECT, and double-clicking Omelet.app must

@@ -4,7 +4,7 @@ from typer.testing import CliRunner
 import host.cli as cli
 from host.core.images import Image
 from host.core.install import DeadEnd, RebootRequired
-from host.core.provider import CheckResult, Completed, Diagnosis
+from host.core.provider import Access, CheckResult, Completed, Diagnosis
 
 runner = CliRunner()
 
@@ -29,6 +29,7 @@ class StubProvider:
     def destroy(self): pass
     def image(self): return Image("http://example.invalid/img.wsl", "0" * 64)
     def runtime(self): return None
+    def access(self): return Access(headline="Connect", summary="", command="wsl")
 
 
 class FailingDestroyProvider(StubProvider):
@@ -195,6 +196,32 @@ def test_cli_never_resolves_bundled_assets_from_its_own_file():
     src = Path("host/cli.py").read_text()
     assert "Path(__file__)" not in src, \
         "resolve bundled assets from an imported module, not from cli.py"
+
+
+def test_setup_hands_the_window_a_factory_it_can_call_twice(monkeypatch, tmp_path):
+    """Re-run setup must build a fresh step list.
+
+    The steps close over provider state (`provider.rootfs` is assigned while
+    the list is built), so handing the window one list and running it twice
+    would re-run the second install against the first one's bindings.
+    """
+    captured = {}
+
+    def fake_run_window(provider, steps_factory, state, *, resumed=False):
+        captured["provider"] = provider
+        steps_factory()
+        steps_factory()
+        captured["resumed"] = resumed
+        return 0
+
+    monkeypatch.setattr("host.setup_app.app.run_window", fake_run_window)
+    monkeypatch.setattr(cli, "_provider_factory", lambda: StubProvider())
+    monkeypatch.setattr("host.providers.default_install_dir",
+                        lambda: tmp_path / "vm")
+
+    result = runner.invoke(cli.app, ["setup"])
+    assert result.exit_code == 0
+    assert captured["resumed"] is False
 
 
 def test_packaging_spec_bundles_exactly_the_assets_selfcheck_verifies():

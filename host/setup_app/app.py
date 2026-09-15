@@ -1,129 +1,126 @@
 from __future__ import annotations
 
+# The router. Two screens live behind it: the status screen a user lands on,
+# and the wizard that runs the install.
+#
+# It opens on status even when nothing is provisioned -- and starts the wizard
+# itself in that case, so a first-time user still double-clicks once. On a
+# machine that is already set up, the status screen is where the SSH details
+# are, and nothing re-runs a multi-minute install just to show them.
+
 import queue
 import threading
 import tkinter as tk
-from tkinter import ttk
 
-from host.core.install import (
-    RESUME_NOTICE, DeadEnd, InstallError, Progress, RebootRequired, run_install,
-)
+from host.core.status import Readiness, probe
 
-_LABELS = {
-    "preflight": "Checking this computer",
-    "remediate": "Turning on Windows features",
-    "reboot_gate": "Restart needed",
-    "fetch_image": "Downloading Linux image",
-    "create_vm": "Creating the virtual machine",
-    "bootstrap": "Installing Omelet",
-    "connect": "Connecting to the Omelet service",
-    "verify": "Testing the setup",
-    "finish": "Finishing up",
-}
-_MARKS = {"running": "…", "done": "✓", "failed": "✗", "skipped": "✓", "reboot": "!"}
+from . import status as status_screen
+from . import theme, widgets, wizard
 
 
-def run_window(steps, state, *, resumed: bool = False) -> int:
-    events: queue.Queue = queue.Queue()
-    outcome = {"code": 0, "message": ""}
-    finished = {"value": False}
-
-    def record(progress: Progress) -> None:
-        # The finish text is the whole point of the run; it belongs in the
-        # final panel, not scrolled away in the log.
-        if progress.step == "finish" and progress.status == "done":
-            outcome["message"] = progress.message
-            events.put(Progress(progress.step, progress.status))
-            return
-        events.put(progress)
-
-    def worker():
-        try:
-            try:
-                run_install(steps, state, record)
-            except RebootRequired:
-                outcome.update(code=2, message=(
-                    "Restart your computer.\n"
-                    "Setup will continue on its own when you log back in."))
-            except DeadEnd as e:
-                outcome.update(code=1, message=
-                    f"This computer needs a change before setup can continue:\n\n{e}")
-            except InstallError as e:
-                message = f"Setup failed during {e.step}:\n\n{e.message}"
-                if e.action:
-                    message += f"\n\nWhat to do: {e.action}"
-                outcome.update(code=1, message=message)
-            except Exception as e:
-                outcome.update(code=1, message=f"Unexpected error: {e}")
-        finally:
-            events.put(None)
-
+def run_window(provider, steps_factory, state, *, resumed: bool = False) -> int:
     root = tk.Tk()
     root.title("Omelet Setup")
-    root.geometry("560x540")
+    root.geometry("620x620")
+    root.minsize(560, 560)
 
-    def on_close():
-        # User closed the window mid-install; report failure rather than default success.
-        if not finished["value"]:
-            outcome.update(code=1, message="Setup was cancelled before completing.")
+    palette = theme.palette_for_root(root)
+    fonts = theme.load_fonts(root)
+    root.configure(bg=palette.bg)
+
+    app_state = {"code": 0, "screen": None, "log": ()}
+
+    def close() -> None:
+        screen = app_state["screen"]
+        if isinstance(screen, wizard.WizardScreen):
+            outcome = screen.cancelled()
+            app_state["code"] = outcome.code
         root.destroy()
 
-    root.protocol("WM_DELETE_WINDOW", on_close)
+    root.protocol("WM_DELETE_WINDOW", close)
 
-    rows: dict[str, tk.StringVar] = {}
-    frame = ttk.Frame(root, padding=16)
-    frame.pack(fill="both", expand=True)
-    if resumed:
-        ttk.Label(frame, text=RESUME_NOTICE, font=("Segoe UI", 10, "bold"),
-                  wraplength=500).pack(anchor="w", pady=(0, 10))
-    for step in steps:
-        var = tk.StringVar(value=f"   {_LABELS.get(step.name, step.name)}")
-        ttk.Label(frame, textvariable=var, font=("Segoe UI", 10)).pack(anchor="w", pady=2)
-        rows[step.name] = var
+    def show(frame) -> None:
+        previous = app_state["screen"]
+        if previous is not None:
+            previous.destroy()
+        app_state["screen"] = frame
+        frame.pack(fill="both", expand=True)
 
-    bar = ttk.Progressbar(frame, mode="indeterminate")
-    bar.pack(fill="x", pady=12)
-    bar.start(12)
+    def show_status(readiness: Readiness) -> None:
+        from host.core import constants
+        try:
+            access = provider.access()
+        except Exception:
+            # A provider that cannot describe how to get in is not a reason to
+            # show nothing; the rest of the screen still answers "am I set up".
+            access = None
+        show(status_screen.StatusScreen(
+            root, palette, fonts, readiness, access,
+            on_setup=start_wizard, on_close=close,
+            version=constants.APP_VERSION, log=app_state["log"]))
 
-    log = tk.Text(frame, height=8, wrap="word", state="disabled")
-    log.pack(fill="both", expand=True)
+    def start_wizard() -> None:
+        # A fresh list every time: the steps close over provider state
+        # (`provider.rootfs` is assigned while the list is built), so a
+        # re-run against a list built for an earlier run would run the
+        # second install against the first one's bindings.
+        screen = wizard.WizardScreen(root, palette, fonts, steps_factory(),
+                                     state, on_finished=wizard_finished,
+                                     resumed=resumed)
+        show(screen)
+        screen.start()
 
-    def append(text: str):
-        log.configure(state="normal")
-        log.insert("end", text + "\n")
-        log.see("end")
-        log.configure(state="disabled")
+    def wizard_finished(outcome: wizard.Outcome) -> None:
+        app_state["code"] = outcome.code
+        app_state["log"] = outcome.log
+        if outcome.code == 0:
+            # Straight to the screen that says how to get in: the install's
+            # closing sentence is the beginning of the next thing the user does.
+            begin_probe(then=show_status)
 
-    def pump():
-        while True:
+    # --- the probe, off the main thread so the window draws immediately ---
+
+    results: queue.Queue = queue.Queue()
+
+    def begin_probe(*, then, auto_setup: bool = False) -> None:
+        show(_Spinner(root, palette, fonts))
+        threading.Thread(target=lambda: results.put(probe(provider)),
+                         daemon=True).start()
+
+        def wait() -> None:
             try:
-                event = events.get_nowait()
+                readiness = results.get_nowait()
             except queue.Empty:
-                break
-            if event is None:
-                finished["value"] = True
-                bar.stop()
-                bar.pack_forget()
-                if outcome["message"]:
-                    # A label, not the log pane: the success text names the next
-                    # command and must not be something the user has to scroll to.
-                    ttk.Label(frame, text=outcome["message"], wraplength=500,
-                              justify="left", font=("Segoe UI", 10)).pack(
-                                  anchor="w", pady=(10, 0))
-                ttk.Button(frame, text="Close", command=root.destroy).pack(pady=8)
-                return
-            _render(event, rows, append)
-        root.after(100, pump)
+                return root.after(100, wait)
+            if auto_setup and not readiness.vm_exists:
+                return start_wizard()
+            then(readiness)
 
-    threading.Thread(target=worker, daemon=True).start()
-    root.after(100, pump)
+        root.after(100, wait)
+
+    if resumed:
+        # A window that opened by itself after a restart has one job.
+        start_wizard()
+    else:
+        begin_probe(then=show_status, auto_setup=True)
+
     root.mainloop()
-    return outcome["code"]
+    return app_state["code"]
 
 
-def _render(event: Progress, rows, append) -> None:
-    label = _LABELS.get(event.step, event.step)
-    if event.step in rows:
-        rows[event.step].set(f" {_MARKS.get(event.status, ' ')} {label}")
-    if event.message:
-        append(f"{label}: {event.message}")
+class _Spinner(tk.Frame):
+    """Shown for the second or two the probe takes. A window that draws nothing
+    while a subprocess runs reads as a hang."""
+
+    def __init__(self, parent, palette: theme.Palette, fonts):
+        super().__init__(parent, bg=palette.bg)
+        widgets.Header(self, palette, fonts, "Omelet", "Checking this computer…").pack(fill="x")
+        self._list = widgets.StepList(self, palette, fonts, [("probe", "Looking for the virtual machine")])
+        self._list.set_state("probe", "running")
+        self._list.pack(fill="x", padx=theme.PAD, pady=theme.PAD)
+        self._tick()
+
+    def _tick(self) -> None:
+        if self.winfo_exists():
+            self._list.tick()
+            self.after(80, self._tick)

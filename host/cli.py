@@ -274,13 +274,15 @@ def setup(resume: bool = typer.Option(False, "--resume"),
     root = default_install_dir().parent
     provider = _provider()
     state = InstallState(root / "install-state.json")
-    steps = default_steps(
-        provider,
-        cache_dir=root / "cache",
-        template_dir=VERIFY_TEMPLATE,
-        domain=constants.DEFAULT_DOMAIN,
-        exe_path=_sys.executable,
-    )
+
+    def build_steps():
+        return default_steps(
+            provider,
+            cache_dir=root / "cache",
+            template_dir=VERIFY_TEMPLATE,
+            domain=constants.DEFAULT_DOMAIN,
+            exe_path=_sys.executable,
+        )
 
     def report(progress: Progress):
         if progress.fraction is not None:
@@ -293,7 +295,9 @@ def setup(resume: bool = typer.Option(False, "--resume"),
 
     if not headless:
         from host.setup_app.app import run_window
-        raise typer.Exit(code=run_window(steps, state, resumed=resume))
+        raise typer.Exit(code=run_window(provider, build_steps, state, resumed=resume))
+
+    steps = build_steps()
 
     if resume:
         typer.echo(RESUME_NOTICE)
