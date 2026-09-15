@@ -121,3 +121,66 @@ def test_an_ordinary_steps_message_still_belongs_in_the_log():
     event, message = wizard.split_finish_message(progress)
     assert event == progress
     assert message is None
+
+
+from host.core.provider import Access, AccessField
+from host.core.status import Readiness
+from host.setup_app import status
+
+READY = Readiness(vm_exists=True, vm_reachable=True, engine_version="0.1.0", agent_api=1)
+ACCESS = Access(headline="Connect a coding agent", summary="…",
+                command="ssh -F /Users/you/.lima/omelet-vm/ssh.config lima-omelet-vm",
+                fields=(AccessField("Host", "127.0.0.1"),
+                        AccessField("Port", "39022")))
+
+
+def test_a_ready_machine_says_so_in_two_lines():
+    headline, detail = status.summarize(READY)
+    assert headline == "Ready"
+    assert "0.1.0" in detail
+
+
+def test_a_machine_with_no_vm_says_what_is_missing_not_what_failed():
+    headline, detail = status.summarize(Readiness())
+    assert headline == "Not set up yet"
+    assert "Set up" in detail or "set up" in detail
+
+
+def test_a_stopped_vm_is_distinguished_from_a_missing_one():
+    headline, _ = status.summarize(Readiness(vm_exists=True))
+    assert headline != "Not set up yet"
+    assert "not running" in headline.lower() or "stopped" in headline.lower()
+
+
+def test_an_incompatible_agent_is_named_as_a_version_problem():
+    from host.core import constants
+    bad = Readiness(vm_exists=True, vm_reachable=True, engine_version="9.9.9",
+                    agent_api=max(constants.SUPPORTED_API) + 1)
+    headline, detail = status.summarize(bad)
+    assert "version" in (headline + detail).lower()
+
+
+def test_diagnostics_carry_everything_someone_would_ask_for():
+    text = status.diagnostics_text(READY, ACCESS, version="0.1.0",
+                                   log=("bootstrap: done",))
+    for expected in ("0.1.0", "vm_exists", "engine_version", "agent_api",
+                     "bootstrap: done"):
+        assert expected in text
+
+
+def test_diagnostics_never_carry_the_identity_file_contents_or_a_token():
+    # Paths are fine; secrets are not. This text is written to be pasted into
+    # a bug report by someone who will not read it first.
+    access = Access(headline="x", summary="y", command="ssh …",
+                    fields=(AccessField("Identity file", "/Users/you/.lima/_config/user"),))
+    text = status.diagnostics_text(READY, access, version="0.1.0")
+    assert "/Users/you/.lima/_config/user" in text
+    assert "PRIVATE KEY" not in text
+
+
+def test_diagnostics_work_before_anything_is_provisioned():
+    # The button exists on a machine where the probe found nothing, and that is
+    # exactly the machine whose user needs to send us something.
+    text = status.diagnostics_text(Readiness(problem="limactl is not installed"),
+                                   None, version="0.1.0")
+    assert "limactl is not installed" in text
