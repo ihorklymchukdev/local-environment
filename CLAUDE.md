@@ -131,7 +131,18 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   `up`/`new`/`clone`/`status`/`logs`/`down` over the agent API with the guest token. One
   stdlib-only file, loaded by tests by path (`tests/engine/cli/loader.py`); it shares constants
   with both sides, held equal by `tests/test_constants_agree.py`. `engine/instructions/` and
-  `engine/skills/` hold what those agents read. Nothing is written into user repositories.
+  `engine/skills/` hold what those agents read. The engine itself writes nothing into user
+  repositories; the skills tell the coding agent to keep a project's own `docs/` and `AGENTS.md`.
+- `engine/skills/` — five skills, one folder each, every folder installed by `install.sh`'s
+  `npx skills add` (no per-skill wiring): `omelet-setup` orchestrates; `omelet-brainstorm`
+  writes `docs/brief.md` or `docs/specs/<date>-<slug>.md` from a plain-words interview;
+  `omelet-stack` chooses adopt → assemble → build with no default language and records
+  `docs/stack.md` (compose recipes in its `references/`); `omelet-rules` writes the project's
+  `AGENTS.md` (+ `CLAUDE.md` = `@AGENTS.md`) from `assets/AGENTS.md`; `omelet-plan` writes and
+  works `docs/plans/<date>-<slug>.md`. `tests/engine/test_skills.py` holds frontmatter `name` equal
+  to the folder, descriptions starting `Use when`, and every hand-off name and bundled file
+  resolvable — skills reference each other by name only. Design:
+  `docs/superpowers/specs/2026-09-15-agent-skills-library-design.md`.
 - `agent/api/` — the FastAPI app the host talks to. `app.py::create_app(config, runner, state)` is
   a factory on purpose (no module-level `app`, so importing it opens no sqlite file); `jobs.py` is
   the in-process job registry that keeps slow compose work off the request; `__main__.py` is the
