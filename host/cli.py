@@ -61,7 +61,9 @@ def callback():
 @app.command()
 def version():
     """Print the Omelet version."""
-    typer.echo("omelet 0.1.0")
+    from host.core import constants
+
+    typer.echo(f"omelet {constants.APP_VERSION}")
 
 
 @app.command()
