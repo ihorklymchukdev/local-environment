@@ -56,6 +56,27 @@ class Runtime:
     run: Callable[[Callable[[int, int], None] | None], None]
 
 
+@dataclass(frozen=True)
+class AccessField:
+    label: str
+    value: str
+
+
+@dataclass(frozen=True)
+class Access:
+    """How a person -- or their coding agent -- gets a shell inside the VM.
+
+    Rendered by the status screen, which must not know what SSH is: a WSL
+    distro runs no SSH server, and a screen that assumed one would be a
+    platform branch in the UI layer.
+    """
+    headline: str
+    summary: str
+    command: str
+    fields: tuple[AccessField, ...] = ()
+    note: str = ""
+
+
 @runtime_checkable
 class VmProvider(Protocol):
     def is_supported(self) -> Diagnosis: ...

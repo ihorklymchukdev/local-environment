@@ -11,9 +11,35 @@ import subprocess
 from pathlib import Path
 
 from . import lima_install
-from ..core.provider import Completed, Diagnosis, CheckResult, Runtime
+from ..core.provider import Access, AccessField, Completed, Diagnosis, CheckResult, Runtime
 
 LOOPBACK = "127.0.0.1"
+
+# Declared in omelet.yaml's `ssh.localPort`, and what the screen shows before
+# the VM has ever been started and written its own ssh.config.
+DECLARED_SSH_PORT = "39022"
+
+_SSH_KEYS = {"hostname": "Host", "port": "Port", "user": "User",
+             "identityfile": "Identity file"}
+
+
+def parse_ssh_config(text: str) -> dict[str, str]:
+    """The four fields an editor's Remote-SSH dialog asks for.
+
+    Lima writes this file when it creates the VM, and LimaProvider.forward()
+    already hands the same path to `ssh -F`. Parsing it here gives that
+    assumption a second reader: if Lima ever moves or renames it, the status
+    screen says so in plain sight instead of a port forward failing quietly.
+    """
+    found: dict[str, str] = {}
+    for line in text.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        label = _SSH_KEYS.get(parts[0].lower())
+        if label and label not in found:
+            found[label] = parts[1].strip().strip('"')
+    return found
 
 # Homebrew installs limactl here and puts neither prefix on the PATH an app
 # launched from Finder is given -- LaunchServices starts one with
@@ -212,6 +238,39 @@ class LimaProvider:
         """What setup gates on before it installs anything. Only facts about
         this computer that no step can change."""
         return Diagnosis(list(self._os_checks()))
+
+    def access(self) -> Access:
+        """What the status screen shows a user who wants a shell -- or a
+        coding agent -- inside the VM. See parse_ssh_config() above for why
+        this reads Lima's own ssh.config rather than shelling `limactl
+        show-ssh` or hand-assembling the command from `self.name` alone."""
+        config = self._ssh_config()
+        note = ""
+        try:
+            found = parse_ssh_config(config.read_text())
+        except OSError:
+            found = {}
+        if not found:
+            note = ("The virtual machine has not been started yet, so these are "
+                    "the values Omelet asks Lima for rather than the ones Lima "
+                    "has written down. Run setup, then open this window again.")
+        import getpass
+        fields = (
+            AccessField("Host", found.get("Host", LOOPBACK)),
+            AccessField("Port", found.get("Port", DECLARED_SSH_PORT)),
+            AccessField("User", found.get("User", getpass.getuser())),
+            AccessField("Identity file", found.get(
+                "Identity file", str(self.lima_home / "_config" / "user"))),
+        )
+        return Access(
+            headline="Connect a coding agent",
+            summary=("Your coding agent runs inside the virtual machine, where "
+                     "Docker and the omelet command already are. Open a shell "
+                     "there with the command below, or point an editor's "
+                     "Remote-SSH at these values."),
+            command=f"ssh -F {config} lima-{self.name}",
+            fields=fields,
+            note=note)
 
     def runtime(self) -> Runtime | None:
         def install(emit) -> None:
