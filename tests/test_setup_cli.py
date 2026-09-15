@@ -63,7 +63,7 @@ def provisionable(monkeypatch):
     import host.core.install as install_mod
 
     monkeypatch.setattr(cli, "_provider_factory", lambda: StubProvider())
-    monkeypatch.setattr(download_mod, "fetch", lambda image, dest: dest)
+    monkeypatch.setattr(download_mod, "fetch", lambda image, dest, on_progress=None: dest)
     monkeypatch.setattr(bootstrap_mod, "bootstrap",
                         lambda provider, **kwargs: None)
     monkeypatch.setattr(install_mod, "connect_step", lambda *a, **k: None)

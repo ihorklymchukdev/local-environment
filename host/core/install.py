@@ -42,12 +42,16 @@ class Progress:
     step: str
     status: str          # running | done | skipped | failed | reboot
     message: str = ""
+    # How far through a long step we are, 0.0-1.0, and only for a step that
+    # declared `progress=True`. None on every other event, including the
+    # `running` one that opens such a step.
+    fraction: float | None = None
 
 
 @dataclass(frozen=True)
 class Step:
     name: str
-    run: Callable[[], str | None]
+    run: Callable[..., str | None]
     # Run on every invocation, never recorded as done. Two kinds of step need
     # this: the ones that prove or report the outcome, and the ones whose
     # product lives in the VM -- which can be destroyed without setup ever
@@ -55,6 +59,13 @@ class Step:
     always_run: bool = False
     # Plain-language next move for the user when this step fails.
     action: str = ""
+    # Set by a provider that names its own step -- "Installing Lima" is Lima's
+    # word, not the installer's. Empty means the UI picks the text.
+    label: str = ""
+    # When true, `run` is called with an `emit(done, total)` callable instead
+    # of with nothing. Only the two download steps set it; every other step,
+    # and every toy step in the tests, keeps the no-argument signature.
+    progress: bool = False
 
 
 # Shown when RunOnce relaunches setup at logon: a window that opens by itself
@@ -83,7 +94,7 @@ def run_install(steps: list[Step], state: InstallState,
             continue
         report(Progress(step.name, "running"))
         try:
-            message = step.run()
+            message = step.run(_emitter(step.name, report)) if step.progress else step.run()
         except RebootRequired:
             # The reboot itself satisfies the gate; resuming must step past it.
             state.mark(step.name)
@@ -100,6 +111,27 @@ def run_install(steps: list[Step], state: InstallState,
         if not step.always_run:
             state.mark(step.name)
         report(Progress(step.name, "done", message or ""))
+
+
+def _emitter(name: str, report: Callable[[Progress], None]):
+    """A fraction channel for one step, throttled to whole percents.
+
+    `fetch` calls back once per megabyte, which is 391 events for the rootfs.
+    The UI drains a queue on a timer and would cope, but a headless run would
+    not, and neither would a log file.
+    """
+    last = [-1]
+
+    def emit(done: int, total: int) -> None:
+        if not total:
+            return          # no Content-Length: nothing truthful to report
+        percent = int(done * 100 / total)
+        if percent == last[0]:
+            return
+        last[0] = percent
+        report(Progress(name, "running", fraction=done / total))
+
+    return emit
 
 
 class DeadEnd(RuntimeError):
@@ -349,16 +381,18 @@ def default_steps(provider, *, cache_dir, template_dir: Path, domain,
         rootfs = Path(cache_dir) / image.url.rsplit("/", 1)[-1]
         provider.rootfs = rootfs
 
-    def fetch_image():
-        fetch(image, rootfs)
+    def fetch_image(emit):
+        fetch(image, rootfs, on_progress=emit)
 
     def gate():
         if provider.reboot_required():
             provider.register_resume(exe_path)
         reboot_gate_step(provider)
 
-    def step(name: str, run, *, always_run: bool = False) -> Step:
-        return Step(name, run, always_run=always_run, action=_ACTIONS.get(name, ""))
+    def step(name: str, run, *, always_run: bool = False, label: str = "",
+             progress: bool = False) -> Step:
+        return Step(name, run, always_run=always_run, action=_ACTIONS.get(name, ""),
+                    label=label, progress=progress)
 
     steps = [step("preflight", lambda: preflight_step(provider))]
     # Only where the host OS has features setup can turn on. macOS ships its
@@ -376,7 +410,7 @@ def default_steps(provider, *, cache_dir, template_dir: Path, domain,
     # them costs seconds and skipping them costs a WSL_E_DISTRO_NOT_FOUND
     # minutes later.
     if image is not None:
-        steps.append(step("fetch_image", fetch_image, always_run=True))
+        steps.append(step("fetch_image", fetch_image, always_run=True, progress=True))
     steps += [
         step("create_vm", lambda: None if provider.exists() else provider.create(),
              always_run=True),

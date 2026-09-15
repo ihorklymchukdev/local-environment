@@ -281,6 +281,8 @@ def setup(resume: bool = typer.Option(False, "--resume"),
     )
 
     def report(progress: Progress):
+        if progress.fraction is not None:
+            return          # the window draws a bar; a terminal would print 100 lines
         if progress.status not in ("running", "done", "failed"):
             return
         typer.echo(f"[{progress.status:>7}] {progress.step}")
