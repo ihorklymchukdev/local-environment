@@ -31,7 +31,9 @@ services:
     command: sh -c "pip install -q -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     environment:
       DATABASE_URL: postgresql+psycopg://app:app@db:5432/app
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # the model provider's key under the name its library reads, e.g. ANTHROPIC_API_KEY
+      # or OPENAI_API_KEY; which provider is a decision recorded in docs/stack.md
+      <PROVIDER>_API_KEY: ${<PROVIDER>_API_KEY:-}
     volumes:
       - .:/app
       - pip_cache:/root/.cache/pip

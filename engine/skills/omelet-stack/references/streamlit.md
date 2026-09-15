@@ -17,7 +17,9 @@ services:
     working_dir: /app
     command: sh -c "pip install -q -r requirements.txt && streamlit run app.py --server.address 0.0.0.0 --server.port 8501 --server.runOnSave true --server.headless true"
     environment:
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # the model provider's key under the name its library reads, e.g. ANTHROPIC_API_KEY
+      # or OPENAI_API_KEY; which provider is a decision recorded in docs/stack.md
+      <PROVIDER>_API_KEY: ${<PROVIDER>_API_KEY:-}
     volumes:
       - .:/app
       - pip_cache:/root/.cache/pip

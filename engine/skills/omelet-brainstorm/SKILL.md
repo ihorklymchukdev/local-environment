@@ -38,6 +38,10 @@ not ask again. The answers are exactly what `omelet-stack` needs to choose a sta
   | AI, LLM, model | "should it answer questions or write things on its own" |
   | hosting, deploy, server | "will it stay on this computer or go online for others" |
 
+- **Assume and state rather than ask.** Ask only what changes the stack or the first slice —
+  usually three or four rows. Everything with a sensible default (language, look, where it
+  lives for now) goes into the reflect-back as a stated assumption the owner can correct in
+  one word. Nine questions in a row is an interrogation, and the owner stops reading them.
 - **Reflect back, then write.** End with the brief in plain words and ask whether it is right.
   Write the file only after a yes. A brief the owner has not confirmed is still a guess.
 
