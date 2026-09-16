@@ -6,8 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A PoC CLI (`omelet`) that creates a managed Linux VM, installs Docker inside it, runs any
 `docker-compose` project in the guest, and hands back a working URL on the host.
-Windows/WSL2 is the primary platform; macOS/Lima exists for parity and is **unverified**
-(`host/providers/lima.py`, `host/providers/omelet.yaml` — both carry an UNVERIFIED banner).
+Windows/WSL2 is the primary platform; macOS/Lima exists for parity and is **confirmed once, still
+mostly unverified below the installer** (`host/providers/lima.py`, `host/providers/omelet.yaml` —
+both carry a banner saying exactly what is and is not confirmed). A VM created from this project's
+own config has booted under `vz` on an Apple Silicon Mac, finished the engine install, and answered
+a health check over both declared port forwards — found and inspected after the fact, not produced
+by a recorded, repeatable session, and not shown to have reached `verify` (a real HTTP 200 that
+leaves no trace of its own) or `finish`. A controlled, recorded run of `create_vm` through `verify`
+is still the gap. Both platforms have a packaged installer; on macOS, `lima_install.install()` —
+the function `omelet setup`'s `install_runtime` step wraps, not `setup` as a whole — has separately
+been run for real and installs Lima itself. `docs/lima-verification-report.md` records exactly
+what has and has not run there.
 
 `task.md` and `docs/superpowers/plans/2026-08-14-local-runtime-poc.md` hold the original blueprint
 and task plan; `.superpowers/sdd/` holds the per-task execution ledger.
@@ -55,7 +64,7 @@ calls changes incompatibly — that one needs a host release.
 ```bash
 pip install -e ".[dev]"
 
-python3 -m pytest -q                                    # full suite (434 tests, ~7s)
+python3 -m pytest -q                                    # full suite (444 tests, ~8s)
 python3 -m pytest tests/agent/test_project.py -q        # one file
 python3 -m pytest -k classify -q                        # one test by name
 ```
@@ -174,8 +183,39 @@ Do not add an `if windows` anywhere else — push the difference into a provider
 - **`npx` inside `install.sh`'s account loop must read `</dev/null`**: the loop reads accounts from
   stdin, and anything else reading it eats the remaining accounts.
 - **Nothing under `agent/` or `engine/` is bundled into the frozen host binary**, and
-  `tests/host/test_frozen_bundle.py` fails if a `datas` entry reappears. The VM pulls the image
-  and fetches the engine itself; only the `nginx-hello` smoke test and `omelet.yaml` ship with the host.
+  `tests/host/test_frozen_bundle.py` fails if a `datas` entry reappears — for *every* spec under
+  `packaging/`, not just the platform you are on. The VM pulls the image and fetches the engine
+  itself; only the `nginx-hello` smoke test and `omelet.yaml` ship with the host.
+- **The install step list is built from the provider, not from the platform.** Beyond the
+  `VmProvider` Protocol, `default_steps` reads six members off whichever provider it was handed:
+  `image()`, `register_resume()`, `location`, `terminal`, `remediable` and `runtime()`.
+  Three of them **remove steps**: `image()` returning None means the VM platform fetches its own
+  guest image (Lima does, from `omelet.yaml`) and `fetch_image` disappears; `remediable = False`
+  means the host OS has nothing to turn on and `remediate`/`reboot_gate` disappear with it;
+  `runtime()` returning None means the VM platform ships with the host OS and `install_runtime`
+  disappears — a value names the step and installs what the platform needs (Lima, on macOS). A
+  step that would be shown and skipped is a step describing the other platform — the mac setup
+  window listed "Turning on Windows features". `access()` is how the status screen shows a user
+  the way into the VM without knowing what SSH is. `tests/host/test_provider_surface.py::test_
+  every_provider_answers_what_the_install_list_asks_of_it` holds both providers to the surface;
+  LimaProvider was missing two of these, so `omelet setup` on macOS died with an `AttributeError`
+  before its first step.
+- **A Mac app gets no shell PATH.** LaunchServices starts one with
+  `/usr/bin:/bin:/usr/sbin:/sbin`, so Homebrew's prefix is absent and `shutil.which("limactl")`
+  answers no inside `Omelet.app` on a machine where `brew install lima` just succeeded. Setup now
+  installs its own pinned Lima into `~/.local/share/omelet/lima` (`host/providers/lima_install.py`),
+  and `find_limactl()` prefers that managed copy over anything on the PATH or in a Homebrew prefix
+  — a user's own Lima is never touched, and every assumption the provider makes about Lima's
+  on-disk layout is an assumption about the version setup put there. The Homebrew-prefix fallback
+  stays for a source checkout that has never run setup. The PATH finding still holds for anything
+  else the host ever shells out to by name on macOS; `ssh` is safe only because it lives in
+  `/usr/bin`.
+- **The two mac executables must not differ only in case.** `Omelet` and `omelet` are one file on a
+  default macOS filesystem: COLLECT wrote both into `Contents/MacOS`, the second replaced the first,
+  and the app launched the CLI windowlessly. The GUI binary is `omelet-setup` for that reason, and
+  `build.sh` counts the binaries rather than trusting the build. `BUNDLE` also infers
+  `CFBundleExecutable` (from COLLECT's sorted table) and `LSBackgroundOnly` (from the console flag)
+  wrongly here — both are set explicitly in `info_plist` and asserted after the build.
 - **The host and the agent each own a `constants.py`**, because nothing under `host/` may import
   `agent/`. `tests/test_constants_agree.py` holds every name declared in both modules equal — add
   a shared constant to one and it must go into the other with the same value.
@@ -220,6 +260,13 @@ Do not add an `if windows` anywhere else — push the difference into a provider
   the token check, so `restart: always` never restarts a container refusing every other route, and
   the agent reads its token **once, at startup**, which is why repair recreates the container — then
   the host re-reads the token and dials again.
+- **The setup window is two screens, and the app opens on the status one.** `host/setup_app/app.py`
+  routes on `host/core/status.py::probe` — VM exists, guest reachable, `engine.version` present,
+  agent API supported — and starts the wizard by itself only when nothing is provisioned. `theme.py`
+  picks light or dark from the luminance of the ttk background rather than by asking which OS this
+  is, which is what keeps the no-platform-branching invariant true in the UI layer. Fonts are
+  tkinter's named system fonts; a hardcoded family name is how every label came to ask macOS for
+  "Segoe UI".
 - CLI command bodies use **function-local imports** deliberately (keeps `omelet --help` and the
   smoke test fast, and avoids importing provider code on unsupported hosts). `cli._provider_factory`
   is a module attribute so tests can monkeypatch the provider.
@@ -243,6 +290,11 @@ Do not add an `if windows` anywhere else — push the difference into a provider
 - Python 3.12+, `from __future__ import annotations`, frozen dataclasses for value types.
 - Host runtime deps are `typer` alone; the agent's are declared in `agent/pyproject.toml`. Keep
   it that way unless there's a reason.
+- Packaging lives in `packaging/<platform>/`: Inno Setup on Windows (`build.ps1`), `pkgbuild`/
+  `productbuild` on macOS (`build.sh` → `dist/OmeletSetup-<version>.pkg`). Both freeze with
+  PyInstaller one-dir and smoke-test the frozen binary (`version`, then `selfcheck`) *before*
+  packaging it. The mac build needs a Python 3.12+ with tkinter and is native-arch only. Manual
+  release gates: `docs/installer-test-matrix.md`, `docs/macos-install-test-matrix.md`.
 - Live WSL2 run needs an Ubuntu 24.04 rootfs tarball path in `OMELET_ROOTFS` (README has the
   current download URL); the provider factory reads it, and `omelet vm create` without it raises
   `ValueError`. The value must be a Windows path — it goes straight to `wsl.exe --import`.

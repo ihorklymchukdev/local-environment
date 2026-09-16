@@ -4,12 +4,16 @@ from typer.testing import CliRunner
 import host.cli as cli
 from host.core.images import Image
 from host.core.install import DeadEnd, RebootRequired
-from host.core.provider import CheckResult, Completed, Diagnosis
+from host.core.provider import Access, CheckResult, Completed, Diagnosis
 
 runner = CliRunner()
 
 
 class StubProvider:
+    location = r"C:\Users\you\AppData\Local\Omelet\vm"
+    terminal = "PowerShell"
+    remediable = True
+
     def __init__(self, diagnosis=None, reboot=False):
         self._diagnosis = diagnosis or Diagnosis([CheckResult("all good", True)])
         self._reboot = reboot
@@ -21,9 +25,12 @@ class StubProvider:
     def register_resume(self, exe): self.resumed_with = exe
     def exists(self): return True
     def create(self): pass
+    def start(self): pass
     def exec(self, argv, *, root=False): return Completed(0, "", "")
     def destroy(self): pass
     def image(self): return Image("http://example.invalid/img.wsl", "0" * 64)
+    def runtime(self): return None
+    def access(self): return Access(headline="Connect", summary="", command="wsl")
 
 
 class FailingDestroyProvider(StubProvider):
@@ -59,7 +66,7 @@ def provisionable(monkeypatch):
     import host.core.install as install_mod
 
     monkeypatch.setattr(cli, "_provider_factory", lambda: StubProvider())
-    monkeypatch.setattr(download_mod, "fetch", lambda image, dest: dest)
+    monkeypatch.setattr(download_mod, "fetch", lambda image, dest, on_progress=None: dest)
     monkeypatch.setattr(bootstrap_mod, "bootstrap",
                         lambda provider, **kwargs: None)
     monkeypatch.setattr(install_mod, "connect_step", lambda *a, **k: None)
@@ -93,6 +100,42 @@ def test_a_failure_offers_a_suggested_action(provisionable):
     assert "archive.ubuntu.com" in result.stdout, "support still needs the raw error"
     assert "What to do" in result.stdout
     assert "Traceback" not in result.stdout
+
+
+def test_headless_setup_uses_the_providers_label_and_prints_progress(monkeypatch):
+    # Two things `_emitter`'s whole-percent throttling still left invisible in
+    # a terminal: 391 lines for a 391 MB download (fixed by printing on a 10%
+    # boundary instead of every percent), and the provider's own step words --
+    # "Installing Lima 2.2.0" is Lima's sentence, not "install_runtime".
+    import host.core.bootstrap as bootstrap_mod
+    import host.core.install as install_mod
+    from host.core.provider import Runtime
+
+    class LimaLikeProvider(StubProvider):
+        remediable = False
+
+        def image(self):
+            return None
+
+        def runtime(self):
+            def run(emit):
+                for done in (10, 55, 100):
+                    emit(done, 100)
+            return Runtime("Installing Lima 2.2.0", run)
+
+    monkeypatch.setattr(cli, "_provider_factory", lambda: LimaLikeProvider())
+    monkeypatch.setattr(bootstrap_mod, "bootstrap", lambda provider, **kwargs: None)
+    monkeypatch.setattr(install_mod, "connect_step", lambda *a, **k: None)
+    monkeypatch.setattr(install_mod, "verify_step", lambda *a, **k: None)
+
+    result = runner.invoke(cli.app, ["setup", "--headless"])
+
+    assert result.exit_code == 0
+    assert "Installing Lima 2.2.0" in result.stdout
+    assert "install_runtime" not in result.stdout
+    percent_lines = [line for line in result.stdout.splitlines() if "%" in line]
+    assert percent_lines, "a long step must show some progress, not silence until it ends"
+    assert "100%" in result.stdout
 
 
 def test_uninstall_requires_purge_to_destroy_the_vm(monkeypatch):
@@ -136,6 +179,23 @@ def test_uninstall_purge_removes_the_vm_directory(monkeypatch):
     runner.invoke(cli.app, ["uninstall", "--purge"])
 
     assert not install_dir.exists(), "the VM directory must not survive a purge"
+
+
+def test_uninstall_purge_removes_the_managed_lima_install(monkeypatch):
+    # setup's install_runtime step puts the managed Lima under
+    # default_install_dir().parent / "lima" (lima_install.managed_root) --
+    # about 100 MB --purge never actually removed.
+    from host.providers import default_install_dir
+
+    monkeypatch.setattr(cli, "_provider_factory", lambda: FailingDestroyProvider())
+    root = default_install_dir().parent
+    lima_dir = root / "lima" / "bin"
+    lima_dir.mkdir(parents=True, exist_ok=True)
+    (lima_dir / "limactl").write_text("x")
+
+    runner.invoke(cli.app, ["uninstall", "--purge"])
+
+    assert not (root / "lima").exists(), "the managed Lima install must not survive a purge"
 
 
 def test_uninstall_purge_succeeds_and_clears_state(monkeypatch):
@@ -190,6 +250,67 @@ def test_cli_never_resolves_bundled_assets_from_its_own_file():
     src = Path("host/cli.py").read_text()
     assert "Path(__file__)" not in src, \
         "resolve bundled assets from an imported module, not from cli.py"
+
+
+def test_setup_hands_the_window_a_factory_it_can_call_twice(monkeypatch, tmp_path):
+    """Re-run setup must build a fresh step list.
+
+    The steps close over provider state (`provider.rootfs` is assigned while
+    the list is built), so handing the window one list and running it twice
+    would re-run the second install against the first one's bindings. Calling
+    steps_factory() twice and discarding the results only proves the
+    parameter is callable twice -- a `lambda: shared_list` closing over one
+    list passes that identically, so this keeps both results and asserts
+    they are distinct objects.
+    """
+    # The monkeypatch target below is a dotted string, which forces a real
+    # import of host.setup_app.app -- and therefore of tkinter, a stdlib
+    # module this repo's own dev sandbox (WSL) does not always have installed.
+    pytest.importorskip("tkinter")
+
+    captured = {}
+    provider = StubProvider()
+
+    def fake_run_window(provider, steps_factory, state, *, resumed=False):
+        captured["provider"] = provider
+        captured["a"] = steps_factory()
+        captured["b"] = steps_factory()
+        captured["resumed"] = resumed
+        return 0
+
+    monkeypatch.setattr("host.setup_app.app.run_window", fake_run_window)
+    monkeypatch.setattr(cli, "_provider_factory", lambda: provider)
+    monkeypatch.setattr("host.providers.default_install_dir",
+                        lambda: tmp_path / "vm")
+
+    result = runner.invoke(cli.app, ["setup"])
+    assert result.exit_code == 0
+    assert captured["resumed"] is False
+    assert captured["provider"] is provider
+    assert captured["a"] is not captured["b"], \
+        "steps_factory must build a fresh list on every call, not close over one"
+
+
+def test_setup_resume_reaches_the_window_as_resumed(monkeypatch, tmp_path):
+    """--resume must reach the window, not just the headless path -- the
+    router's own copy of `resumed` is what decides whether the wizard opens
+    with "Continuing setup after the restart"."""
+    pytest.importorskip("tkinter")
+
+    captured = {}
+
+    def fake_run_window(provider, steps_factory, state, *, resumed=False):
+        captured["resumed"] = resumed
+        return 0
+
+    monkeypatch.setattr("host.setup_app.app.run_window", fake_run_window)
+    monkeypatch.setattr(cli, "_provider_factory", lambda: StubProvider())
+    monkeypatch.setattr("host.providers.default_install_dir",
+                        lambda: tmp_path / "vm")
+
+    result = runner.invoke(cli.app, ["setup", "--resume"])
+    assert result.exit_code == 0
+    assert captured["resumed"] is True
 
 
 def test_packaging_spec_bundles_exactly_the_assets_selfcheck_verifies():

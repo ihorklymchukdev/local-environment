@@ -62,10 +62,12 @@ try {
     & $cliExe version
     if ($LASTEXITCODE -ne 0) { throw "Smoke test failed: omelet.exe version." }
     # version never touches disk, so it can pass on a bundle that's missing a
-    # datas entry; selfcheck resolves each bundled asset the way the real
-    # code does and catches that class of failure before it reaches a user.
+    # datas entry or a hiddenimport; selfcheck resolves each bundled asset the
+    # way the real code does, and also imports the five setup_app modules the
+    # spec's hiddenimports name, and catches either class of failure before
+    # it reaches a user.
     & $cliExe selfcheck
-    if ($LASTEXITCODE -ne 0) { throw "Smoke test failed: omelet.exe selfcheck reported a missing bundled asset." }
+    if ($LASTEXITCODE -ne 0) { throw "Smoke test failed: omelet.exe selfcheck reported a missing bundled asset or setup-window module." }
 
     if (-not $InnoSetup) { $InnoSetup = Resolve-Iscc }
     if (-not $InnoSetup -or -not (Test-Path $InnoSetup)) {

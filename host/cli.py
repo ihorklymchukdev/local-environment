@@ -61,7 +61,9 @@ def callback():
 @app.command()
 def version():
     """Print the Omelet version."""
-    typer.echo("omelet 0.1.0")
+    from host.core import constants
+
+    typer.echo(f"omelet {constants.APP_VERSION}")
 
 
 @app.command()
@@ -272,25 +274,45 @@ def setup(resume: bool = typer.Option(False, "--resume"),
     root = default_install_dir().parent
     provider = _provider()
     state = InstallState(root / "install-state.json")
-    steps = default_steps(
-        provider,
-        cache_dir=root / "cache",
-        template_dir=VERIFY_TEMPLATE,
-        domain=constants.DEFAULT_DOMAIN,
-        exe_path=_sys.executable,
-        install_dir=default_install_dir(),
-    )
 
-    def report(progress: Progress):
-        if progress.status not in ("running", "done", "failed"):
-            return
-        typer.echo(f"[{progress.status:>7}] {progress.step}")
-        if progress.message:
-            typer.echo(progress.message)
+    def build_steps():
+        return default_steps(
+            provider,
+            cache_dir=root / "cache",
+            template_dir=VERIFY_TEMPLATE,
+            domain=constants.DEFAULT_DOMAIN,
+            exe_path=_sys.executable,
+        )
 
     if not headless:
         from host.setup_app.app import run_window
-        raise typer.Exit(code=run_window(steps, state, resumed=resume))
+        raise typer.Exit(code=run_window(provider, build_steps, state, resumed=resume))
+
+    steps = build_steps()
+    # A provider names its own step's words -- "Installing Lima 2.2.0" is
+    # Lima's sentence, not the installer's (see Step.label) -- so headless
+    # must use it too, the same way the window's step_label() does.
+    labels = {s.name: s.label for s in steps if s.label}
+    # One line per ten percent of a long step, not per whole-percent event:
+    # `_emitter` already throttles to 391 events for the rootfs, which is 391
+    # lines of terminal output otherwise -- headless printed nothing at all
+    # between "[running] install_runtime" and the step's own "done".
+    last_decile: dict[str, int] = {}
+
+    def report(progress: Progress):
+        label = labels.get(progress.step, progress.step)
+        if progress.fraction is not None:
+            decile = int(progress.fraction * 10)
+            if last_decile.get(progress.step, -1) >= decile:
+                return
+            last_decile[progress.step] = decile
+            typer.echo(f"[running] {label} — {decile * 10}%")
+            return
+        if progress.status not in ("running", "done", "failed"):
+            return
+        typer.echo(f"[{progress.status:>7}] {label}")
+        if progress.message:
+            typer.echo(progress.message)
 
     if resume:
         typer.echo(RESUME_NOTICE)
@@ -334,6 +356,11 @@ def uninstall(purge: bool = typer.Option(False, "--purge")):
     # The VM's own directory: wsl --unregister normally empties it, but a
     # failed or partial destroy leaves a multi-gigabyte vhdx behind.
     shutil.rmtree(install_dir, ignore_errors=True)
+    # macOS only in practice (root/lima is never created on Windows), but
+    # harmless to remove unconditionally: setup's install_runtime step puts
+    # the managed Lima here (lima_install.managed_root), and leaving it
+    # behind was the ~100 MB --purge never actually cleaned up.
+    shutil.rmtree(root / "lima", ignore_errors=True)
     # No host-side state.db to remove any more: project state lives in the VM
     # at /opt/omelet/state.db and goes with the VM.
 
@@ -370,6 +397,31 @@ def selfcheck():
         ok = path.is_file()
         all_ok = all_ok and ok
         typer.echo(f"{'OK' if ok else 'MISSING':<7} {label} -> {path}")
+
+    # The setup window is five modules PyInstaller can only find through the
+    # spec's hiddenimports. A bundle missing one launches, shows a Dock icon
+    # and dies on the first draw -- which is exactly what this command exists
+    # to catch before a user does. Reported the same way as the asset checks
+    # above (an OK/MISSING line per item) rather than as an uncaught
+    # traceback, so the two failure classes this command guards against read
+    # the same way. Caught as ImportError, not the narrower
+    # ModuleNotFoundError: `app` does `from . import status`, so a missing
+    # `status` fails `app`'s own import too, but as a plain ImportError
+    # ("cannot import name 'status'"), not a ModuleNotFoundError -- both mean
+    # "not found in this bundle". A real bug inside one of these modules
+    # (a RuntimeError, an AttributeError, anything raised by the module's own
+    # code rather than by the import machinery) is a different failure and
+    # still surfaces as a full traceback, not as MISSING.
+    import importlib
+    for name in ("theme", "widgets", "wizard", "status", "app"):
+        label = f"host.setup_app.{name}"
+        try:
+            importlib.import_module(label)
+        except ImportError as e:
+            all_ok = False
+            typer.echo(f"{'MISSING':<7} {label} -> {e}")
+        else:
+            typer.echo(f"{'OK':<7} {label}")
 
     raise typer.Exit(code=0 if all_ok else 1)
 

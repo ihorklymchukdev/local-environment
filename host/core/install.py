@@ -42,12 +42,16 @@ class Progress:
     step: str
     status: str          # running | done | skipped | failed | reboot
     message: str = ""
+    # How far through a long step we are, 0.0-1.0, and only for a step that
+    # declared `progress=True`. None on every other event, including the
+    # `running` one that opens such a step.
+    fraction: float | None = None
 
 
 @dataclass(frozen=True)
 class Step:
     name: str
-    run: Callable[[], str | None]
+    run: Callable[..., str | None]
     # Run on every invocation, never recorded as done. Two kinds of step need
     # this: the ones that prove or report the outcome, and the ones whose
     # product lives in the VM -- which can be destroyed without setup ever
@@ -55,6 +59,13 @@ class Step:
     always_run: bool = False
     # Plain-language next move for the user when this step fails.
     action: str = ""
+    # Set by a provider that names its own step -- "Installing Lima" is Lima's
+    # word, not the installer's. Empty means the UI picks the text.
+    label: str = ""
+    # When true, `run` is called with an `emit(done, total)` callable instead
+    # of with nothing. Only the two download steps set it; every other step,
+    # and every toy step in the tests, keeps the no-argument signature.
+    progress: bool = False
 
 
 # Shown when RunOnce relaunches setup at logon: a window that opens by itself
@@ -83,7 +94,7 @@ def run_install(steps: list[Step], state: InstallState,
             continue
         report(Progress(step.name, "running"))
         try:
-            message = step.run()
+            message = step.run(_emitter(step.name, report)) if step.progress else step.run()
         except RebootRequired:
             # The reboot itself satisfies the gate; resuming must step past it.
             state.mark(step.name)
@@ -100,6 +111,27 @@ def run_install(steps: list[Step], state: InstallState,
         if not step.always_run:
             state.mark(step.name)
         report(Progress(step.name, "done", message or ""))
+
+
+def _emitter(name: str, report: Callable[[Progress], None]):
+    """A fraction channel for one step, throttled to whole percents.
+
+    `fetch` calls back once per megabyte, which is 391 events for the rootfs.
+    The UI drains a queue on a timer and would cope, but a headless run would
+    not, and neither would a log file.
+    """
+    last = [-1]
+
+    def emit(done: int, total: int) -> None:
+        if not total:
+            return          # no Content-Length: nothing truthful to report
+        percent = int(done * 100 / total)
+        if percent == last[0]:
+            return
+        last[0] = percent
+        report(Progress(name, "running", fraction=done / total))
+
+    return emit
 
 
 class DeadEnd(RuntimeError):
@@ -296,12 +328,17 @@ def _teardown(client) -> None:
                 f"running.\n{e}") from e
 
 
-def finish_step(install_dir) -> str:
-    """The only step whose product is words. Every run must reach it."""
+def finish_step(location, terminal: str) -> str:
+    """The only step whose product is words. Every run must reach it.
+
+    Both values come from the provider: the VM does not live in the same place
+    on both platforms (Lima owns its own directory), and neither does the
+    terminal the user is being sent to.
+    """
     return (
         "Setup finished successfully.\n"
-        f"The virtual machine and its files are in: {install_dir}\n\n"
-        "To start a project, open PowerShell and run:\n\n"
+        f"The virtual machine and its files are in: {location}\n\n"
+        f"To start a project, open {terminal} and run:\n\n"
         "    omelet up <folder>\n\n"
         "where <folder> is the folder that holds your docker-compose.yml.")
 
@@ -314,54 +351,89 @@ _ACTIONS = {
     "fetch_image": "The Linux image could not be downloaded — the internet "
                    "connection was unavailable. Run setup again and the download "
                    "continues from where it stopped.",
-    "create_vm": "The virtual machine could not be created. Restart the computer, "
-                 "make sure there is at least 10 GB free, and run setup again.",
-    "bootstrap": "Omelet could not be installed inside the virtual machine. The "
-                 "detail above comes from inside the VM. Run setup again; if it "
-                 "fails the same way twice, send us that text.",
+    # A checksum mismatch unlinks the partial file (download.fetch), and an
+    # unsupported processor never starts a download at all (archive_for) --
+    # so "continues from where it stopped" was only ever true for one of the
+    # three causes this step can fail with.
+    "install_runtime": "Lima could not be downloaded. A dropped internet "
+                       "connection resumes on the next run; a checksum "
+                       "mismatch starts the download over; an unsupported "
+                       "processor cannot run Lima at all. Run setup again.",
+    "create_vm": "The virtual machine could not be created or started. Restart "
+                 "the computer, make sure there is at least 10 GB free, and "
+                 "run setup again.",
+    # Neither sentence below may say where the detail is: the headless CLI
+    # prints this action after the detail, the wizard shows this action AS
+    # the detail label with the raw error in the log box beneath it -- "above"
+    # is true in one front door and false in the other.
+    "bootstrap": "Omelet could not be installed inside the virtual machine. "
+                 "The error came from inside it; open the log for the exact "
+                 "text. Run setup again; if it fails the same way twice, "
+                 "send us that text.",
     "connect": "The Omelet service inside the virtual machine would not work "
-               "with this app, or would not accept this computer — the "
-               "message above says which. Run setup again; if it fails the "
-               "same way twice, use Copy diagnostics and send us the text.",
+               "with this app, or would not accept this computer. Open the "
+               "log to see which. Run setup again; if it fails the same way "
+               "twice, use Copy diagnostics and send us the text.",
     "verify": "The test project did not answer. Run setup again; if it fails a "
               "second time, use Copy diagnostics and send us the text.",
 }
 
 
 def default_steps(provider, *, cache_dir, template_dir: Path, domain,
-                  exe_path: str, install_dir) -> list[Step]:
+                  exe_path: str) -> list[Step]:
     from .download import fetch
 
+    # None when the VM platform fetches its own guest image -- Lima names it in
+    # omelet.yaml and limactl caches it. There is then no rootfs for the host to
+    # download and no download step to run, rather than a step that quietly does
+    # nothing.
     image = provider.image()
-    # Assigned here rather than inside fetch_image: that step is skipped on a
-    # resume or a re-run, and create_vm needs the path in every process.
-    rootfs = Path(cache_dir) / image.url.rsplit("/", 1)[-1]
-    provider.rootfs = rootfs
+    rootfs = None
+    if image is not None:
+        # Assigned here rather than inside fetch_image: that step is skipped on
+        # a resume or a re-run, and create_vm needs the path in every process.
+        rootfs = Path(cache_dir) / image.url.rsplit("/", 1)[-1]
+        provider.rootfs = rootfs
 
-    def fetch_image():
-        fetch(image, rootfs)
+    def fetch_image(emit):
+        fetch(image, rootfs, on_progress=emit)
 
     def gate():
         if provider.reboot_required():
             provider.register_resume(exe_path)
         reboot_gate_step(provider)
 
-    def step(name: str, run, *, always_run: bool = False) -> Step:
-        return Step(name, run, always_run=always_run, action=_ACTIONS.get(name, ""))
+    def step(name: str, run, *, always_run: bool = False, label: str = "",
+             progress: bool = False) -> Step:
+        return Step(name, run, always_run=always_run, action=_ACTIONS.get(name, ""),
+                    label=label, progress=progress)
 
-    return [
-        step("preflight", lambda: preflight_step(provider)),
-        step("remediate", lambda: remediate_step(provider)),
-        step("reboot_gate", gate),
-        # Only the three steps above may be remembered across runs: they are
-        # facts about this computer. Everything below is a fact about the VM,
-        # and each re-derives it cheaply -- fetch() returns on a matching
-        # digest, create() on an existing distro, bootstrap() on a matching
-        # guest marker -- so re-running them costs seconds and skipping them
-        # costs a WSL_E_DISTRO_NOT_FOUND minutes later.
-        step("fetch_image", fetch_image, always_run=True),
-        step("create_vm", lambda: None if provider.exists() else provider.create(),
-             always_run=True),
+    steps = [step("preflight", lambda: preflight_step(provider))]
+    # What the VM platform itself needs, which on macOS is Lima. None on
+    # Windows, where wsl.exe is part of the OS -- the same shape as image():
+    # the step is absent rather than present and skipped.
+    runtime = provider.runtime()
+    if runtime is not None:
+        steps.append(step("install_runtime", runtime.run, always_run=True,
+                          label=runtime.label, progress=True))
+    # Only where the host OS has features setup can turn on. macOS ships its
+    # virtualization framework, so there is nothing to enable and no restart to
+    # wait for, and a step list that showed both would be describing Windows.
+    if provider.remediable:
+        steps += [
+            step("remediate", lambda: remediate_step(provider)),
+            step("reboot_gate", gate),
+        ]
+    # Only the steps above may be remembered across runs: they are facts about
+    # this computer. Everything below is a fact about the VM, and each
+    # re-derives it cheaply -- fetch() returns on a matching digest, create() on
+    # an existing distro, bootstrap() on a matching guest marker -- so re-running
+    # them costs seconds and skipping them costs a WSL_E_DISTRO_NOT_FOUND
+    # minutes later.
+    if image is not None:
+        steps.append(step("fetch_image", fetch_image, always_run=True, progress=True))
+    steps += [
+        step("create_vm", lambda: _ensure_vm_running(provider), always_run=True),
         step("bootstrap", lambda: _bootstrap(provider), always_run=True),
         # Before verify: a mismatched or refusing agent is one sentence here,
         # not a 404 or 401 minutes into the smoke test.
@@ -370,8 +442,23 @@ def default_steps(provider, *, cache_dir, template_dir: Path, domain,
             always_run=True),
         step("verify", lambda: verify_step(provider, template_dir, domain),
              always_run=True),
-        step("finish", lambda: finish_step(install_dir), always_run=True),
+        step("finish", lambda: finish_step(provider.location, provider.terminal),
+             always_run=True),
     ]
+    return steps
+
+
+def _ensure_vm_running(provider) -> None:
+    """Existing is not running. `omelet setup`'s summary told a user with a
+    stopped VM to "run setup again to start it", but nothing in this list ever
+    called `start()` -- Lima's `shell` refuses a stopped instance outright
+    ("... is stopped, run 'limactl start ...'"), which is why only a Lima run
+    ever surfaced this: `wsl.exe -d` auto-starts a distro, so WSL2 hid the gap
+    behind its own exec() calls."""
+    if provider.exists():
+        provider.start()
+    else:
+        provider.create()
 
 
 def _bootstrap(provider, *, repair: bool = False) -> None:
