@@ -10,6 +10,10 @@ shell tests compare install.sh's literals against these names, so the host and
 the engine cannot end up pointing at different files.
 """
 
+# The desktop app's own version, shown on the status screen and in the
+# diagnostics text. Bumped with pyproject.toml's.
+APP_VERSION = "0.1.0"
+
 GUEST_ROOT = "/opt/omelet"
 GUEST_PROJECTS = f"{GUEST_ROOT}/projects"
 AGENT_PORT = 39099

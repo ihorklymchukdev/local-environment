@@ -32,7 +32,38 @@ Useful flags: `-Rootfs <path>` to use a rootfs you already have,
 `wsl.exe`, and `get_provider()` raises `unsupported host platform: linux` if
 you run it from a WSL shell.
 
-## Setup (manual, or macOS)
+## Setup (macOS)
+
+Build the installer, then install it:
+
+```bash
+brew install lima                  # not bundled yet; setup stops without it
+python3.12 -m venv .venv && .venv/bin/python -m pip install -e ".[dev]"
+bash packaging/macos/build.sh      # -> dist/OmeletSetup-<version>.pkg
+sudo installer -pkg dist/OmeletSetup-0.1.0.pkg -target /
+```
+
+The build needs a Python 3.12+ **with tkinter** (Homebrew splits it out:
+`brew install python-tk@3.13`), and produces a native-architecture package — an
+Apple Silicon build refuses to install on Intel rather than installing binaries
+it cannot run. It is unsigned unless `OMELET_CODESIGN_ID` and
+`OMELET_INSTALLER_ID` are set, so a *downloaded* copy needs right-click > Open;
+a locally built one installs normally.
+
+The package puts `Omelet.app` in `/Applications` and `omelet` on your PATH, and
+stops there. Open Omelet from Applications to build the VM (or run
+`omelet setup --headless`) — the installer deliberately does not do it for you:
+its scripts run as root, and Lima keeps VMs per user under `~/.lima`.
+
+To remove everything, including the VM and every project in it:
+`bash packaging/macos/uninstall.sh`.
+
+**Unverified below the packaging.** No Lima VM has ever been created; setup is
+known to run as far as its first check. See `docs/lima-verification-report.md`
+and `docs/macos-install-test-matrix.md` for exactly what has and has not been
+run.
+
+## Setup (manual)
 
 ```bash
 pip install -e ".[dev]"
@@ -77,7 +108,28 @@ omelet vm destroy        # destroy the VM
 
 ## Looking inside the VM
 
-There is no `omelet shell` command; use `wsl.exe`. Note that every WSL distro
+There is no `omelet shell` command; use the VM tool for your platform.
+
+### macOS
+
+```bash
+limactl shell omelet-vm                      # a shell in the VM, as your user
+limactl shell omelet-vm -- sudo -i           # root
+limactl shell omelet-vm -- sudo docker ps    # traefik + projects
+limactl shell omelet-vm -- sudo cat /opt/omelet/engine.version
+limactl shell omelet-vm -- sudo bash /opt/omelet/engine/install.sh engine-vX.Y.Z --repair
+```
+
+`sudo` needs no password and no TTY. `limactl list` shows the VM's status, ports
+and directory.
+
+**Nothing from the Mac is mounted.** `omelet.yaml` sets `mounts: []`, so the VM
+cannot see your files; projects reach it over HTTP (`AgentClient.upload_directory`),
+never through a shared folder.
+
+### Windows
+
+Use `wsl.exe`. Note that every WSL distro
 reports your Windows machine name as its hostname, so the prompt does not tell
 you which one you are in — always pass `-d omelet-vm`.
 

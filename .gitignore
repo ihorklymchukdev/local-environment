@@ -7,3 +7,13 @@ venv/
 .omelet/
 *.db
 omelet.cmd
+
+# PyInstaller / installer build output
+build/
+dist/
+
+# macOS Finder
+.DS_Store
+
+# Subagent-driven-development scratch (ledger, briefs, review packages)
+.superpowers/

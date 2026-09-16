@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from ..core.images import WSL_IMAGES
-from ..core.provider import Completed, Diagnosis
+from ..core.provider import Access, AccessField, Completed, Diagnosis
 from .wsl_encoding import decode_wsl
 from .wsl_checks import diagnose_wsl2, preflight_checks
 
@@ -309,6 +309,24 @@ class Wsl2Provider:
     def preflight(self) -> Diagnosis:
         return preflight_checks(**self._facts())
 
+    def access(self) -> Access:
+        """No SSH, and no pretending otherwise. A WSL distro runs no sshd; the
+        way in is wsl.exe, and the way to the files is the UNC path Explorer
+        and every Windows editor already understand."""
+        from ..core import constants
+        return Access(
+            headline="Connect a coding agent",
+            summary=("Your coding agent runs inside the virtual machine, where "
+                     "Docker and the omelet command already are. Open a shell "
+                     "there with the command below."),
+            command=f"wsl -d {self.distro}",
+            fields=(
+                AccessField("Virtual machine", self.distro),
+                AccessField("Projects folder",
+                            rf"\\wsl$\{self.distro}"
+                            + constants.GUEST_PROJECTS.replace("/", "\\")),
+            ))
+
     def apply_remedy(self, remedy: str) -> None:
         if remedy not in ("enable_wsl_features", "update_wsl"):
             raise ValueError(f"unknown remedy: {remedy}")
@@ -337,3 +355,20 @@ class Wsl2Provider:
 
     def image(self):
         return WSL_IMAGES[self._arch]
+
+    def runtime(self):
+        """Nothing to install: wsl.exe ships with Windows, and what it needs
+        turned on is `remediable` above, not a download."""
+        return None
+
+    @property
+    def location(self) -> Path:
+        """Where `wsl --import` put the distro's vhdx."""
+        return self.install_dir
+
+    # Named for the user, in the finish message.
+    terminal = "PowerShell"
+
+    # WSL2 and VirtualMachinePlatform are Windows features setup can turn on,
+    # and turning them on needs a restart.
+    remediable = True

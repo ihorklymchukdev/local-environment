@@ -5,15 +5,19 @@ from pathlib import Path
 # Path("host") scans nothing and passes vacuously when pytest runs elsewhere.
 HOST = Path(__file__).resolve().parents[2] / "host"
 
-# `exec()` survives the thinning for two jobs only: getting the VM provisioned,
-# and reading the token that lets the host talk to the agent over HTTP. Every
-# other use is project logic reaching across the boundary by shelling into the
-# guest, which is what Phase 1 moved into the agent. A new entry here is a
-# design decision, not a formality.
+# `exec()` survives the thinning for three jobs: getting the VM provisioned,
+# reading the token that lets the host talk to the agent over HTTP, and the
+# readiness probe's own cheap reachability check (`exec(["true"])`) and engine
+# marker read (`exec(["cat", ...])`) -- both facts the probe must establish
+# itself, before there is a client to ask anything of. Every other use is
+# project logic reaching across the boundary by shelling into the guest, which
+# is what Phase 1 moved into the agent. A new entry here is a design decision,
+# not a formality.
 ALLOWED_CALLERS = {
     ("core/bootstrap.py", "_run"),
     ("core/bootstrap.py", "_installed"),
     ("client.py", "read_token"),
+    ("core/status.py", "probe"),
 }
 
 
@@ -33,7 +37,7 @@ def _exec_callers(tree, rel: str):
                 yield rel, node.name, child.lineno
 
 
-def test_exec_is_only_used_for_bootstrap_and_the_token():
+def test_exec_is_only_used_for_bootstrap_the_token_and_the_readiness_probe():
     offenders = []
     found = []
     scanned = [py for py in sorted(HOST.rglob("*.py")) if "providers" not in py.parts]
@@ -45,9 +49,10 @@ def test_exec_is_only_used_for_bootstrap_and_the_token():
             if (rel, func) not in ALLOWED_CALLERS:
                 offenders.append(f"{rel}:{lineno} in {func}()")
     assert not offenders, (
-        "provider.exec() was called outside bootstrap and the token read: "
-        f"{offenders}. Shelling into the guest to do project work is what the "
-        "agent's HTTP API replaced -- add a route there instead.")
+        "provider.exec() was called outside bootstrap, the token read and the "
+        f"readiness probe: {offenders}. Shelling into the guest to do project "
+        "work is what the agent's HTTP API replaced -- add a route there "
+        "instead.")
     # Guards against the allowlist outliving the code it describes.
     assert set(found) == ALLOWED_CALLERS, (
         f"ALLOWED_CALLERS no longer matches the tree: found {sorted(set(found))}")
