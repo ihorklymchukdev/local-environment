@@ -246,3 +246,40 @@ def test_install_writes_this_vms_real_docker_gid_for_the_stack():
         "the GID must be read from the VM, not assumed"
     assert not any(re.search(r"OMELET_DOCKER_GID=[0-9]", l) for l in commands), \
         "a literal GID is the bug this guards against"
+
+
+def test_install_gets_the_github_cli_from_githubs_own_repo():
+    # Ubuntu 24.04 ships no gh at all, and the third-party mirrors that carry
+    # one lag releases badly. cli.github.com is the only source that is both
+    # current and published for amd64 and arm64 -- the VM is arm64 under Lima.
+    commands = _commands()
+    assert any("cli.github.com" in l for l in commands)
+    assert any(re.search(r"apt-get install -y( .*)? gh\b", l) for l in commands), \
+        "gh must come from the apt repo, not a downloaded tarball"
+
+
+def test_install_guards_gh_on_the_package_not_the_binary():
+    # Same trap as docker-ce: a gh on PATH from somewhere else would skip the
+    # install and leave the repo unconfigured for every later upgrade.
+    code = _commands()
+    assert any("dpkg -s gh" in l for l in code)
+    assert not any("command -v gh" in l for l in code)
+
+
+def test_the_github_cli_repo_is_signed_by_its_keyring():
+    # An unsigned apt source lets anything that can answer for cli.github.com
+    # install a root-run package into the VM.
+    (source_line,) = [l for l in _commands() if "cli.github.com/packages stable" in l]
+    assert "signed-by=/etc/apt/keyrings/" in source_line
+    assert "trusted=yes" not in source_line
+    assert "arch=$(dpkg --print-architecture)" in source_line, \
+        "the VM is arm64 under Lima and amd64 under WSL2"
+
+
+def test_a_github_cli_failure_is_reported_and_stops_the_install():
+    # provider.exec() never raises and install.sh runs behind a bootstrap that
+    # only re-checks engine.version -- a silently skipped gh would look installed.
+    text = INSTALL.read_text()
+    gh_block = text.split("dpkg -s gh")[1].split("node_ok()")[0]
+    assert gh_block.count("exit 1") == 2, "both the keyring and the apt failure must stop"
+    assert "cli.github.com" in gh_block and ">&2" in gh_block

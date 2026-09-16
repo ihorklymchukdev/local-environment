@@ -138,10 +138,30 @@ if (( TOKEN_CREATED || REPAIR )); then
   /usr/bin/docker compose -f /opt/omelet/stack.yml up -d --force-recreate agent
 fi
 
-# 8. git for `omelet clone`, Node for `npx skills`.
+# 8. git for `omelet clone`, gh for GitHub work, Node for `npx skills`.
 if ! dpkg -s git >/dev/null 2>&1; then
   if ! { apt-get update && apt-get install -y git; }; then
     echo "could not install git: the Ubuntu package mirrors may be unreachable" >&2
+    exit 1
+  fi
+fi
+# Ubuntu 24.04 packages no gh, so this is GitHub's own repo. Its keyring ships
+# dearmored, unlike NodeSource's, so no gpg and no gnupg dependency here.
+# Guarded on the package rather than `command -v gh`: a gh reaching this VM from
+# somewhere else -- a Docker Desktop mount, a user's own install -- would skip
+# the repo too, and every later upgrade with it. That is the docker-ce trap.
+if ! dpkg -s gh >/dev/null 2>&1; then
+  install -m 0755 -d /etc/apt/keyrings
+  if ! curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; then
+    echo "could not reach cli.github.com to install the GitHub CLI" >&2
+    exit 1
+  fi
+  chmod a+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+    > /etc/apt/sources.list.d/github-cli.list
+  if ! { apt-get update && apt-get install -y gh; }; then
+    echo "could not install the GitHub CLI: cli.github.com or the Ubuntu package mirrors may be unreachable" >&2
     exit 1
   fi
 fi

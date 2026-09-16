@@ -14,3 +14,6 @@ always give them the project's URL.
 - An idea for an app, or a change to a project: start with the `omelet-brainstorm` skill.
 - Something to set up, import or run — a repo URL, an archive, a folder: the `omelet-setup`
   skill (no skills? run `omelet --help`).
+- GitHub — repositories, pull requests, issues: use `gh`. It is installed but starts
+  signed out, so check `gh auth status` first; if it is not logged in, run
+  `gh auth login` and read the user the code it prints.
